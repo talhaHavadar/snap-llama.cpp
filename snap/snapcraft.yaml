@@ -8,7 +8,7 @@ description: |
   we live in tweetspace and your description wants to look good in the snap
   store.
 grade: devel # must be 'stable' to release into candidate/stable channels
-confinement: devmode # use 'strict' once you have the right plugs and slots
+confinement: classic # use 'strict' once you have the right plugs and slots
 package-repositories:
   - type: apt
     components:
@@ -30,6 +30,8 @@ components:
 apps:
   llama-cpp:
     command: bin/cli-wrapper
+    plugs:
+      - home
 parts:
   cli:
     plugin: dump
@@ -55,6 +57,7 @@ parts:
       - libcurl4-openssl-dev # or disable -DLLAMA_CURL=OFF
     stage-packages:
       - libcurl4t64
+      - libssl3t64
       - libgomp1
       - libhipblas3
       - librocblas5
