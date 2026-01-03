@@ -1,0 +1,76 @@
+name: llama-cpp # you probably want to 'snapcraft register <name>'
+base: core26 # the base snap is the execution environment for this snap
+version: "0.1" # just for humans, typically '1.2+git' or '1.3.2'
+summary: Single-line elevator pitch for your amazing snap # 79 char long summary
+description: |
+  This is my-snap's description. You have a paragraph or two to tell the
+  most important story about your snap. Keep it under 100 words though,
+  we live in tweetspace and your description wants to look good in the snap
+  store.
+grade: devel # must be 'stable' to release into candidate/stable channels
+confinement: devmode # use 'strict' once you have the right plugs and slots
+package-repositories:
+  - type: apt
+    components:
+      - main
+    suites:
+      - resolute
+    key-id: 9272F44EA10223C73B884BADB35AA5B4E400B24A
+    url: https://ppa.launchpadcontent.net/tchavadar/rocm-with-llvm-21/ubuntu
+environment:
+  # Set path to snap components
+  SNAP_COMPONENTS: /snap/$SNAP_INSTANCE_NAME/components/$SNAP_REVISION
+  # To find shared libraries that are staged and moved to components
+  ARCH_TRIPLET: $CRAFT_ARCH_TRIPLET_BUILD_FOR
+components:
+  hip:
+    type: standard
+    summary: llama.cpp with HIP backend
+    description: Optimized for inference on AMD GPUs
+apps:
+  llama-cpp:
+    command: bin/cli-wrapper
+parts:
+  cli:
+    plugin: dump
+    source: .
+    stage:
+      - bin/cli-wrapper
+    organize:
+      cli.sh: bin/cli-wrapper
+  component-local-files:
+    plugin: dump
+    source: components
+    organize:
+      "hip": (component/hip)
+  llama-cpp-hip:
+    source: https://github.com/ggml-org/llama.cpp.git
+    source-tag: b7616
+    source-depth: 1
+    build-packages:
+      - rocm-cmake
+      - hipcc
+      - libhipblas-dev # TODO: we need hipblas
+      - librocblas-dev
+      - libcurl4-openssl-dev # or disable -DLLAMA_CURL=OFF
+    stage-packages:
+      - libcurl4t64
+      - libgomp1
+      - libhipblas3
+      - librocblas5
+    plugin: cmake
+    override-build: |
+      export HIPCXX="$(hipconfig -l)/clang"
+      export HIP_PATH="$(hipconfig -R)"
+      craftctl default
+    cmake-parameters:
+      - -DGGML_HIP=ON
+      - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+      - -DCMAKE_BUILD_TYPE=Release
+      # - -DGGML_HIP_ROCWMMA_FATTN=ON # needs rocwmma-dev package
+    organize:
+      # move everything, including the staged packages
+      "*": (component/hip)
+  my-part:
+    # See 'snapcraft plugins'
+    plugin: nil
