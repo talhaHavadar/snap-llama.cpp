@@ -25,3 +25,16 @@ sudo snap install llama-cpp+hip
 sudo snap install --devmode --dangerous llama-cpp_0.1_amd64.snap
 sudo snap install --devmode --dangerous llama-cpp+hip.comp
 ```
+
+## Usage
+
+Currently `llama-cpp` command, installed with the snap, pipes the first argument
+at the end of `llama-` so if you run `llama-cpp cli` then it will execute `llama-cli` binary.
+
+```bash
+# Simple server Example
+llama-cpp server
+
+# loading a model and running llama-cpp cli
+llama-cpp cli -hf hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF
+```
