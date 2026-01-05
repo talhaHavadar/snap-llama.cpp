@@ -5,9 +5,19 @@ summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   This snap provides llama.cpp with different backends like HIP (for AMD GPU)
   using snap components.
+license: MIT
+source-code:
+  - https://github.com/talhaHavadar/snap-llama.cpp
+  - https://github.com/ggml-org/llama.cpp
 issues:
   - https://github.com/talhaHavadar/snap-llama.cpp/issues/new/choose
 icon: snap/gui/icon.svg
+platforms:
+  amd64:
+    build-on:
+      - amd64
+    build-for:
+      - amd64
 grade: devel
 confinement: devmode
 package-repositories:
