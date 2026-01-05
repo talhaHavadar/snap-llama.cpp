@@ -16,7 +16,7 @@ snapcraft pack
 
 ```bash
 # install llama-cpp with HIP backend
-sudo snap install llama-cpp+hip
+sudo snap install --devmode --edge llama-cpp+hip
 ```
 
 ### Local installs
