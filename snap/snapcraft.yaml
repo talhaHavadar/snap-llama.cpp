@@ -1,6 +1,6 @@
 name: llama-cpp
 base: core26
-version: "0.1"
+version: "b7616-1"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   This snap provides llama.cpp with different backends like HIP (for AMD GPU)
