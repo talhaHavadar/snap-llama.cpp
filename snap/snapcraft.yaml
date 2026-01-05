@@ -11,7 +11,7 @@ source-code:
   - https://github.com/ggml-org/llama.cpp
 issues:
   - https://github.com/talhaHavadar/snap-llama.cpp/issues/new/choose
-icon: snap/gui/icon.svg
+icon: snap/gui/icon.png
 platforms:
   amd64:
     build-on:
