@@ -1,5 +1,7 @@
 # Snap of llama.cpp
 
+[![llama-cpp](https://snapcraft.io/llama-cpp/badge.svg)](https://snapcraft.io/llama-cpp)
+
 llama.cpp packaged as snap with different backends as snap components.
 
 ## Building
