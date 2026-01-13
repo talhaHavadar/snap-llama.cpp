@@ -34,6 +34,10 @@ Currently `llama-cpp` command, installed with the snap, pipes the first argument
 at the end of `llama-` so if you run `llama-cpp cli` then it will execute `llama-cli` binary.
 
 ```bash
+# Make sure the current user in groups `render` and `video`
+sudo adduser $USER video
+sudo adduser $USER render
+
 # Simple server Example
 llama-cpp server
 
