@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^snap/snapcraft\\.yaml$/"
+      ],
+      "matchStrings": [
+        "version:\\s*\"(?<currentValue>b[0-9]+)\"",
+        "source-tag:\\s*(?<currentValue>b[0-9]+)"
+      ],
+      "depNameTemplate": "ggml-org/llama.cpp",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^b(?<major>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "ggml-org/llama.cpp"
+      ],
+      "commitMessageTopic": "llama.cpp",
+      "commitMessagePrefix": "snap:",
+      "commitMessageAction": "bump version to",
+      "commitMessageExtra": "{{newValue}}"
+    }
+  ]
+}
