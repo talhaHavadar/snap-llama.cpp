@@ -44,13 +44,29 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: llama-cpp-${{ matrix.arch }}
-      - name: Locate snap file
-        id: find
-        run: echo "snap=$(ls *.snap | head -n1)" >> "$GITHUB_OUTPUT"
-      - name: Publish to latest/edge
-        uses: canonical/action-publish@v1.2.3
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+      # `canonical/action-publish` calls plain `snapcraft upload <snap>`, which
+      # the store rejects for snaps that declare components ("Missing
+      # component(s): hip"). Invoke snapcraft directly so the snap and its
+      # component land in the same revision and channel release.
+      - name: Publish snap + hip component to latest/edge
+        shell: bash
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        with:
-          snap: ${{ steps.find.outputs.snap }}
-          release: latest/edge
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          snap_files=(llama-cpp_*.snap)
+          comp_files=(llama-cpp+hip_*.comp)
+          if [ ${#snap_files[@]} -ne 1 ]; then
+            echo "expected exactly one .snap file, found: ${snap_files[*]:-<none>}" >&2
+            exit 1
+          fi
+          if [ ${#comp_files[@]} -ne 1 ]; then
+            echo "expected exactly one hip .comp file, found: ${comp_files[*]:-<none>}" >&2
+            exit 1
+          fi
+          snapcraft upload "${snap_files[0]}" \
+            --component "hip=${comp_files[0]}" \
+            --release latest/edge
