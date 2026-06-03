@@ -1,7 +1,7 @@
 name: llama-cpp
 base: core26
 build-base: devel
-version: "b9488"
+version: "b9493"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   llama.cpp packaged as a snap. The main snap ships a CPU build that
@@ -105,7 +105,7 @@ parts:
   # exec_dir matches and discovery works without any env var.
   ggml-cpu:
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: b9488
+    source-tag: b9493
     source-depth: 1
     source-subdir: ggml
     plugin: cmake
@@ -141,7 +141,7 @@ parts:
   llama-cpp:
     after: [ggml-cpu]
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: b9488
+    source-tag: b9493
     source-depth: 1
     plugin: cmake
     build-packages:
@@ -178,7 +178,7 @@ parts:
   # ggml-cpu's copies in the default partition.
   ggml-hip:
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: b9488
+    source-tag: b9493
     source-depth: 1
     source-subdir: ggml
     plugin: cmake
