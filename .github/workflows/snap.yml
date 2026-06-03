@@ -58,7 +58,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           snap_files=(llama-cpp_*.snap)
-          comp_files=(llama-cpp+hip_*.comp)
+          comp_files=(llama-cpp+hip*.comp)
           if [ ${#snap_files[@]} -ne 1 ]; then
             echo "expected exactly one .snap file, found: ${snap_files[*]:-<none>}" >&2
             exit 1

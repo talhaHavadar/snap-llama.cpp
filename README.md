@@ -66,7 +66,7 @@ The snap is split into a CPU main snap plus optional GPU backend snap
 components, mirroring how Debian packages `ggml` and `llama.cpp`:
 
 - Main snap: `ggml` (built with `GGML_BACKEND_DL=ON GGML_CPU_ALL_VARIANTS=ON`)
-  + `llama.cpp` (built with `LLAMA_USE_SYSTEM_GGML=ON`).
+  - `llama.cpp` (built with `LLAMA_USE_SYSTEM_GGML=ON`).
 - `hip` component: only `libggml-hip.so` and the ROCm runtime libs.
 - `cuda` component: same shape, deferred.
 
@@ -87,7 +87,7 @@ Local install for testing:
 
 ```bash
 sudo snap install --devmode --dangerous llama-cpp_<version>_<arch>.snap
-sudo snap install --devmode --dangerous llama-cpp+hip_<version>_<arch>.comp
+sudo snap install --devmode --dangerous llama-cpp+hip.comp
 ```
 
 ## Migrating from earlier versions
