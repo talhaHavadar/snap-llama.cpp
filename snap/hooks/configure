@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# Validate the `backend` snap config key. Runs at install time and on every
+# `snap set llama-cpp backend=…`. Rejects unknown values synchronously so
+# `snap set` fails with a clear message instead of surfacing as a "no backend
+# loaded" error at first inference.
+backend="$(snapctl get backend)"
+case "${backend:-auto}" in
+  cpu|hip|cuda|auto) ;;
+  *)
+    echo "llama-cpp: backend='$backend' is invalid (use cpu, hip, cuda, or auto)" >&2
+    exit 1
+    ;;
+esac
+
+# On first install snapctl get returns empty. Seed a sensible default so
+# `snap get llama-cpp backend` prints something meaningful.
+if [ -z "$backend" ]; then
+  snapctl set backend=auto
+fi

@@ -4,10 +4,22 @@ build-base: devel
 version: "b9488"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
-  This snap provides llama.cpp with different backends like HIP (for AMD GPU)
-  using snap components.
+  llama.cpp packaged as a snap. The main snap ships a CPU build that
+  works on any x86_64 or arm64 machine. Optional snap components add
+  GPU backends:
 
-  Install the HIP backend: `sudo snap install --edge --devmode llama-cpp+hip`
+    sudo snap install --edge --devmode llama-cpp           # CPU
+    sudo snap install --edge --devmode llama-cpp+hip       # add AMD GPU
+    # llama-cpp+cuda is reserved for a follow-up release
+
+  Select a backend persistently with:
+
+    sudo snap set llama-cpp backend={cpu,hip,cuda,auto}    # auto = probe
+    snap get llama-cpp backend
+
+  or override it per invocation with the env var:
+
+    LLAMA_CPP_BACKEND=cpu llama-cpp cli ...
 license: MIT
 source-code:
   - https://github.com/talhaHavadar/snap-llama.cpp
@@ -17,33 +29,61 @@ issues:
 icon: snap/gui/icon.png
 platforms:
   amd64:
-    build-on:
-      - amd64
-    build-for:
-      - amd64
+    build-on: [amd64]
+    build-for: [amd64]
   arm64:
-    build-on:
-      - arm64
-    build-for:
-      - arm64
+    build-on: [arm64]
+    build-for: [arm64]
 grade: devel
 confinement: devmode
+# The classic linter checks ELF interpreters/rpaths for `confinement: classic`
+# snaps that escape snap-confine's mount namespace. We are devmode (and will
+# move to strict, not classic), so those checks don't apply — silence them.
+lint:
+  ignore:
+    - classic
 environment:
-  # Set path to snap components
-  SNAP_COMPONENTS: /snap/$SNAP_INSTANCE_NAME/components/$SNAP_REVISION
-  # To find shared libraries that are staged and moved to components
+  # Used by cli.sh and baked into the snap by snapcraft (expanded at build).
   ARCH_TRIPLET: $CRAFT_ARCH_TRIPLET_BUILD_FOR
+  # snapd does not expose a single "components root" env var, so we build it
+  # from $SNAP and $SNAP_REVISION. Deriving from $SNAP keeps this portable —
+  # on distros like Arch / Fedora the snap mount root is /var/lib/snapd/snap/
+  # rather than /snap/, and $SNAP always reflects the real mount path.
+  # cli.sh reads $SNAP_COMPONENTS to find backend .so files inside components.
+  SNAP_COMPONENTS: $SNAP/../components/$SNAP_REVISION
+  # Make the main snap's libggml* / libllama* / libmtmd visible to the
+  # dynamic linker. libmtmd is installed by llama.cpp at the non-multiarch
+  # $SNAP/usr/lib/ path (rather than $SNAP/usr/lib/<triplet>/), so we add
+  # both directories.
+  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:$LD_LIBRARY_PATH
 components:
   hip:
     type: standard
-    summary: llama.cpp with HIP backend
-    description: Optimized for inference on AMD GPUs
+    summary: AMD GPU (HIP/ROCm) backend
+    description: |
+      Adds libggml-hip.so plus the ROCm runtime libraries so llama.cpp
+      can offload to AMD GPUs. Built for the same llama.cpp source tag
+      as the parent snap to guarantee ABI compatibility.
+  cuda:
+    # Declared so the snap-store layout and wrapper logic are ready.
+    # The ggml-cuda build part is intentionally not wired in this
+    # release — follow-up work, see docs/adr/0002 for the rollout plan.
+    type: standard
+    summary: NVIDIA GPU (CUDA) backend
+    description: |
+      Adds libggml-cuda.so plus the CUDA runtime libraries so llama.cpp
+      can offload to NVIDIA GPUs. NOT YET BUILT — placeholder for a
+      follow-up release.
 apps:
   llama-cpp:
     command: bin/cli-wrapper
     plugs:
       - home
+      - network
+      - network-bind
+      - removable-media
 parts:
+  # --- Wrapper script ------------------------------------------------------
   cli:
     plugin: dump
     source: .
@@ -51,37 +91,146 @@ parts:
       - bin/cli-wrapper
     organize:
       cli.sh: bin/cli-wrapper
-  component-local-files:
-    plugin: dump
-    source: components
-    organize:
-      "hip": (component/hip)
-  llama-cpp-hip:
+  # --- ggml: CPU + loader libs, lives in the main snap --------------------
+  # Builds llama.cpp's bundled ggml/ subdirectory standalone with the
+  # backend-dl loader enabled and every CPU variant emitted as its own .so.
+  #
+  # We deliberately do NOT set GGML_BACKEND_DIR. ggml's CMake uses that flag
+  # both as the compile-time search path AND as the install DESTINATION,
+  # which puts the backend .so files at an absolute path (e.g. /snap/...)
+  # under the part install root and breaks the snap layout. Instead we rely
+  # on ggml's executable-directory search (ggml-backend-reg.cpp:473): the
+  # loader scans `dirname(/proc/self/exe)`. The `organize:` rule below moves
+  # the CPU backends into $SNAP/bin/ alongside the llama-* binaries, so
+  # exec_dir matches and discovery works without any env var.
+  ggml-cpu:
     source: https://github.com/ggml-org/llama.cpp.git
     source-tag: b9488
     source-depth: 1
+    source-subdir: ggml
+    plugin: cmake
+    build-packages:
+      - pkg-config
+    stage-packages:
+      - libgomp1
+    # llama.cpp's bundled ggml/ strips standalone-only files (tests/,
+    # examples/, ggml.pc.in) but its CMakeLists still auto-enables
+    # GGML_STANDALONE when ggml is the top-level project. Force it off so the
+    # configure step doesn't try to descend into directories that don't exist.
+    override-pull: |
+      craftctl default
+      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
+        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_CPU_ALL_VARIANTS=ON
+      - -DGGML_NATIVE=OFF
+      - -DGGML_BUILD_TESTS=OFF
+      - -DGGML_BUILD_EXAMPLES=OFF
+    # Without GGML_BACKEND_DIR, ggml installs the backend modules to
+    # CMAKE_INSTALL_BINDIR (= usr/bin/). Move them next to the llama-* binaries
+    # in $SNAP/bin/ so the loader's executable-directory scan finds them.
+    organize:
+      usr/bin/libggml-cpu*.so: bin/
+  # --- llama.cpp linked against the ggml-cpu staged tree -------------------
+  # LLAMA_USE_SYSTEM_GGML=ON tells llama.cpp to find_package(ggml REQUIRED)
+  # against ggml-cpu's install tree (staged before this part runs).
+  llama-cpp:
+    after: [ggml-cpu]
+    source: https://github.com/ggml-org/llama.cpp.git
+    source-tag: b9488
+    source-depth: 1
+    plugin: cmake
+    build-packages:
+      - libcurl4-openssl-dev
+      - pkg-config
+    stage-packages:
+      - libcurl4t64
+      - libssl3t64
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DLLAMA_USE_SYSTEM_GGML=ON
+      - -DGGML_NATIVE=OFF
+      # Don't ship test binaries and examples in the snap. llama.cpp defaults
+      # both to ON when built standalone — without these the prime tree fills
+      # with test-* and example-* binaries under usr/bin/.
+      - -DLLAMA_BUILD_TESTS=OFF
+      - -DLLAMA_BUILD_EXAMPLES=OFF
+      # Point find_package(ggml) at the ggml-cpu artefacts staged by the prior
+      # part. Snapcraft 8.14's cmake plugin does not pre-set CMAKE_PREFIX_PATH.
+      - -DCMAKE_PREFIX_PATH=${CRAFT_STAGE}/usr
+    # Move the cli binaries to $SNAP/bin/ so the wrapper finds them on PATH
+    # without needing $SNAP/usr/bin. The libs stay at their multi-arch
+    # paths — snap-confine + the LD_LIBRARY_PATH set in `environment:`
+    # take care of the rest.
+    organize:
+      usr/bin/llama-*: bin/
+  # --- ggml HIP backend, organised into the `hip` component ----------------
+  # Same upstream source-tag as ggml-cpu for ABI compatibility. Only
+  # libggml-hip.so + ROCm runtime libs are routed into the component; the
+  # local libggml.so / libggml-base.so / ggml-config.cmake this build also
+  # produces are filtered at the `stage:` step so they do not collide with
+  # ggml-cpu's copies in the default partition.
+  ggml-hip:
+    source: https://github.com/ggml-org/llama.cpp.git
+    source-tag: b9488
+    source-depth: 1
+    source-subdir: ggml
+    plugin: cmake
     build-packages:
       - rocm-cmake
       - hipcc
       - libhipblas-dev
       - librocblas-dev
-      - libcurl4-openssl-dev
     stage-packages:
-      - libcurl4t64
-      - libssl3t64
-      - libgomp1
       - libhipblas3
       - librocblas5
-    plugin: cmake
+      - libgomp1
+    # Same standalone-files workaround as ggml-cpu — see comment there.
+    override-pull: |
+      craftctl default
+      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
+        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
     override-build: |
       export HIPCXX="$(hipconfig -l)/clang"
       export HIP_PATH="$(hipconfig -R)"
       craftctl default
     cmake-parameters:
-      - -DGGML_HIP=ON
-      - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+      - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
-      # - -DGGML_HIP_ROCWMMA_FATTN=ON # needs rocwmma-dev package
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_CPU=OFF
+      - -DGGML_HIP=ON
+      - -DGGML_NATIVE=OFF
+      - -DGGML_BUILD_TESTS=OFF
+      - -DGGML_BUILD_EXAMPLES=OFF
+      # Quote so the `;` separators reach cmake as one arg rather than
+      # getting interpreted as shell command separators.
+      - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
     organize:
-      # move everything, including the staged packages
-      "*": (component/hip)
+      # Without GGML_BACKEND_DIR, ggml installs the HIP backend to
+      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
+      usr/bin/libggml-hip.so: (component/hip)/lib/ggml/backends/libggml-hip.so
+      # Catch-all for every ROCm runtime library the stage-packages closure
+      # pulled in. By the time we get here, the ggml internals are already
+      # filtered out by the `stage:` exclusions below, so anything left in
+      # usr/lib/<triplet>/ is part of the AMD GPU runtime and belongs in the
+      # component, not the main snap.
+      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/hip)/lib/
+    # Drop the ggml-internal artifacts this build also produces. ggml-cpu
+    # already owns libggml.so, libggml-base.so, the ggml-config.cmake, the
+    # pkgconfig, and the headers — and the hip-built copies differ in content
+    # (GGML_HIP=ON bakes into the config), so leaving them would collide.
+    stage:
+      - -usr/include
+      - -usr/lib/*/cmake
+      - -usr/lib/*/pkgconfig
+      - -usr/lib/*/libggml.so*
+      - -usr/lib/*/libggml-base.so*
+      - -usr/lib/*/ggml/backends0/libggml-cpu*
