@@ -48,9 +48,13 @@ jobs:
         run: sudo snap install snapcraft --classic
       # `canonical/action-publish` calls plain `snapcraft upload <snap>`, which
       # the store rejects for snaps that declare components ("Missing
-      # component(s): hip"). Invoke snapcraft directly so the snap and its
-      # component land in the same revision and channel release.
-      - name: Publish snap + hip component to latest/edge
+      # component(s): <name>"). Invoke snapcraft directly so the snap and
+      # every component land in the same revision and channel release.
+      # Components are discovered by glob, so adding a new component
+      # (vulkan, sycl, …) needs no workflow change — drop a part into
+      # snapcraft.yaml and the matching llama-cpp+<name>_*.comp is picked
+      # up here automatically.
+      - name: Publish snap and components to latest/edge
         shell: bash
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
@@ -58,15 +62,21 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           snap_files=(llama-cpp_*.snap)
-          comp_files=(llama-cpp+hip*.comp)
           if [ ${#snap_files[@]} -ne 1 ]; then
             echo "expected exactly one .snap file, found: ${snap_files[*]:-<none>}" >&2
             exit 1
           fi
-          if [ ${#comp_files[@]} -ne 1 ]; then
-            echo "expected exactly one hip .comp file, found: ${comp_files[*]:-<none>}" >&2
+          component_args=()
+          for comp in llama-cpp+*.comp; do
+            # Extract the component name from llama-cpp+<name>.comp
+            name="${comp#llama-cpp+}"
+            name="${name%.comp}"
+            component_args+=(--component "$name=$comp")
+          done
+          if [ ${#component_args[@]} -eq 0 ]; then
+            echo "no llama-cpp+*.comp files found" >&2
             exit 1
           fi
           snapcraft upload "${snap_files[0]}" \
-            --component "hip=${comp_files[0]}" \
+            "${component_args[@]}" \
             --release latest/edge
