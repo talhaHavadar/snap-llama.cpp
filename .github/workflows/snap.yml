@@ -1,0 +1,56 @@
+name: Snap
+on:
+  pull_request:
+  push:
+    branches: [main]
+# Cancel superseded runs on the same PR/branch.
+concurrency:
+  group: snap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build snap
+        id: build
+        uses: canonical/action-build@v1.3.0
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: llama-cpp-${{ matrix.arch }}
+          path: |
+            ${{ steps.build.outputs.snap }}
+            *.comp
+          if-no-files-found: error
+  publish:
+    # Only publish when main advances, never from a PR (PR runs lack secrets).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-cpp-${{ matrix.arch }}
+      - name: Locate snap file
+        id: find
+        run: echo "snap=$(ls *.snap | head -n1)" >> "$GITHUB_OUTPUT"
+      - name: Publish to latest/edge
+        uses: canonical/action-publish@v1.2.3
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.find.outputs.snap }}
+          release: latest/edge
