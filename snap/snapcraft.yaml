@@ -1,7 +1,7 @@
 name: llama-cpp
 base: core26
 build-base: devel
-version: "b9222"
+version: "b9488"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   This snap provides llama.cpp with different backends like HIP (for AMD GPU)
@@ -58,7 +58,7 @@ parts:
       "hip": (component/hip)
   llama-cpp-hip:
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: b9222
+    source-tag: b9488
     source-depth: 1
     build-packages:
       - rocm-cmake
