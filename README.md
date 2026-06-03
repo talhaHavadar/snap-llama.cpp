@@ -14,8 +14,8 @@ sudo snap install --edge --devmode llama-cpp
 # Optional: add the AMD GPU (HIP/ROCm) backend
 sudo snap install --edge --devmode llama-cpp+hip
 
-# Optional: NVIDIA backend — reserved for a follow-up release, not yet built.
-# sudo snap install --edge --devmode llama-cpp+cuda
+# Optional: add the NVIDIA GPU (CUDA) backend
+sudo snap install --edge --devmode llama-cpp+cuda
 ```
 
 ## Configure the backend
@@ -68,7 +68,7 @@ components, mirroring how Debian packages `ggml` and `llama.cpp`:
 - Main snap: `ggml` (built with `GGML_BACKEND_DL=ON GGML_CPU_ALL_VARIANTS=ON`)
   - `llama.cpp` (built with `LLAMA_USE_SYSTEM_GGML=ON`).
 - `hip` component: only `libggml-hip.so` and the ROCm runtime libs.
-- `cuda` component: same shape, deferred.
+- `cuda` component: only `libggml-cuda.so` and the CUDA runtime libs.
 
 The rationale and trade-offs are recorded as ADRs under
 [`docs/adr/`](docs/adr/). Start with
@@ -80,7 +80,8 @@ The rationale and trade-offs are recorded as ADRs under
 snapcraft pack
 # produces:
 #   llama-cpp_<version>_<arch>.snap         (main snap, small)
-#   llama-cpp+hip_<version>_<arch>.comp     (HIP component, large)
+#   llama-cpp+hip.comp                      (HIP component, large)
+#   llama-cpp+cuda.comp                     (CUDA component, large)
 ```
 
 Local install for testing:
@@ -88,6 +89,7 @@ Local install for testing:
 ```bash
 sudo snap install --devmode --dangerous llama-cpp_<version>_<arch>.snap
 sudo snap install --devmode --dangerous llama-cpp+hip.comp
+sudo snap install --devmode --dangerous llama-cpp+cuda.comp
 ```
 
 ## Migrating from earlier versions
