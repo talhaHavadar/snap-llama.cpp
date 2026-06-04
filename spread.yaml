@@ -2,6 +2,8 @@ project: snap-llama.cpp
 path: /root/snap-llama.cpp
 environment:
   DEBIAN_FRONTEND: noninteractive
+  TIMESTAMP: $(date -u +"%Y-%m-%d-%H:%M:%S")
+  ARTIFACT_LOG: "output-${TIMESTAMP}.log"
   # Channel to test. The Spread workflow sets latest/edge; locally you can
   # override (e.g. CHANNEL=latest/beta spread tchavadar:) to re-test before
   # promoting from beta to stable later.
@@ -38,13 +40,16 @@ prepare: |
   snap install llama-cpp --channel="$CHANNEL" --devmode
   case "$SPREAD_SYSTEM" in
     hip-*)
-      snap install llama-cpp+hip --channel="$CHANNEL" ;;
+      snap install llama-cpp+hip --channel="$CHANNEL" --devmode
+      snap components llama-cpp | grep -E '^llama-cpp\+hip\s' ;;
     cuda-*)
-      snap install llama-cpp+cuda --channel="$CHANNEL" ;;
+      snap install llama-cpp+cuda --channel="$CHANNEL" --devmode
+      snap components llama-cpp | grep -E '^llama-cpp\+cuda\s' ;;
     ubuntu-*)
       : "no GPU on lxd backend — CPU only" ;;
   esac
   snap list
+  snap components llama-cpp || true
   snap connections llama-cpp || true
   echo "Tested channel: $CHANNEL"
   snap info llama-cpp | sed -n '/channels:/,/^$/p'

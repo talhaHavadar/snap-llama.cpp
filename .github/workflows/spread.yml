@@ -14,7 +14,7 @@ on:
         type: boolean
         default: true
 jobs:
-  test-edge:
+  test:
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel || 'latest/edge' }}
@@ -54,7 +54,7 @@ jobs:
                  | tr -d '()')
           if [ "$beta" = "${{ steps.channel.outputs.revision }}" ]; then
             echo "Channel revision matches latest/beta — nothing to test"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -81,6 +81,11 @@ jobs:
           nc -zvu "$WIREGUARD_SERVER_IP_TCHAVADAR" "$WIREGUARD_SERVER_PORT"
           sudo wg-quick up wg1
       - if: steps.skip.outputs.skip != 'true'
+        name: Setup LXD
+        uses: canonical/setup-lxd@da2ac84e727dc534215fd14cd088b9209d65893b
+        with:
+          group: adm
+      - if: steps.skip.outputs.skip != 'true'
         id: run-spread
         continue-on-error: true
         name: Run spread
@@ -90,14 +95,18 @@ jobs:
           "$SPREAD_BIN" -json spread-results.json -artifacts=./logs \
             | tee spread.log
       - if: always() && !cancelled() && steps.skip.outputs.skip != 'true'
+        name: Bundle logs (work around colon-in-path restriction)
+        run: |
+          tar czf spread-logs.tar.gz \
+            $( [ -d logs ] && echo logs ) \
+            $( [ -f spread.log ] && echo spread.log ) \
+            $( [ -f spread-results.json ] && echo spread-results.json )
+      - if: always() && !cancelled() && steps.skip.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: spread-${{ github.run_id }}
           retention-days: 30
-          path: |
-            spread.log
-            spread-results.json
-            logs/
+          path: spread-logs.tar.gz
       # Promotion: only on green spread + when promotion is enabled. For
       # schedule events promotion is always on; for workflow_dispatch the
       # user picks via the `promote` input.
@@ -108,8 +117,8 @@ jobs:
         name: Promote tested revision to latest/beta
         run: |
           sudo snap install snapcraft --classic
-          snapcraft release llama-cpp ${{ steps.edge.outputs.revision }} latest/beta
-          echo "Promoted revision ${{ steps.edge.outputs.revision }} → latest/beta"
+          snapcraft release llama-cpp ${{ steps.channel.outputs.revision }} latest/beta
+          echo "Promoted revision ${{ steps.channel.outputs.revision }} → latest/beta"
           # Log the post-promote channel map so a human reviewing the
           # run can confirm components rode along.
           snap info llama-cpp | sed -n '/channels:/,/^$/p'

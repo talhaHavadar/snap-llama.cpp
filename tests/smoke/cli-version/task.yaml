@@ -1,4 +1,10 @@
 summary: llama-cpp cli --version succeeds and prints a version string.
+# Force the CPU backend so the binary doesn't try to load HIP/CUDA at
+# startup just to print its version. The wrapper's auto-probe picks the
+# first available GPU backend, which means even `--version` triggers a
+# full ROCm/CUDA runtime init — overkill for a smoke test.
+environment:
+  LLAMA_CPP_BACKEND: cpu
 execute: |-
   set -eu
   exec &> >(tee "${ARTIFACT_LOG}")
