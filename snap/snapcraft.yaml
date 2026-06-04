@@ -51,11 +51,7 @@ environment:
   # rather than /snap/, and $SNAP always reflects the real mount path.
   # cli.sh reads $SNAP_COMPONENTS to find backend .so files inside components.
   SNAP_COMPONENTS: $SNAP/../components/$SNAP_REVISION
-  # Make the main snap's libggml* / libllama* / libmtmd visible to the
-  # dynamic linker. libmtmd is installed by llama.cpp at the non-multiarch
-  # $SNAP/usr/lib/ path (rather than $SNAP/usr/lib/<triplet>/), so we add
-  # both directories.
-  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:$LD_LIBRARY_PATH
+  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:/var/lib/snapd/lib/gl:/var/lib/snapd/lib/gl32:$LD_LIBRARY_PATH
 components:
   hip:
     type: standard
@@ -79,6 +75,10 @@ apps:
       - network
       - network-bind
       - removable-media
+      # CUDA's libggml-cuda.so dlopens libcuda.so.1 (the NVIDIA userspace
+      # driver stub) which is NOT redistributable — it must come from the
+      # host because it has to match the kernel module version.
+      - opengl
 parts:
   # --- Wrapper script ------------------------------------------------------
   cli:
