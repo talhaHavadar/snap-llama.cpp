@@ -1,0 +1,14 @@
+summary: snap set backend=<valid> succeeds and snap get echoes it back.
+execute: |-
+  set -eux
+  exec &> >(tee "${ARTIFACT_LOG}")
+  for b in cpu hip cuda auto; do
+    snap set llama-cpp backend="$b"
+    got=$(snap get llama-cpp backend)
+    echo "set $b -> got $got"
+    test "$got" = "$b"
+  done
+artifacts:
+  - .
+restore: |
+  snap set llama-cpp backend=auto || true

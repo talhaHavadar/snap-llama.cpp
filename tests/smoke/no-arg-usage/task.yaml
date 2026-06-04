@@ -1,0 +1,9 @@
+summary: llama-cpp with no args exits 1.
+execute: |-
+  set -u
+  exec &> >(tee "${ARTIFACT_LOG}")
+  out=$(llama-cpp 2>&1) && rc=0 || rc=$?
+  echo "$out"
+  test "$rc" -eq 1
+artifacts:
+  - .

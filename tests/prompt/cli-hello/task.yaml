@@ -1,0 +1,20 @@
+summary: Tiny gemma-3-1b inference, one per backend variant.
+# Spread expands this into prompt/cli-hello:cpu, prompt/cli-hello:hip, prompt/cli-hello:cuda.
+# $SPREAD_VARIANT lands in the env at execute time.
+variants: [cpu, hip, cuda]
+systems: [hip-*, cuda-*, ubuntu-*]
+execute: |-
+  set -eu
+  exec &> >(tee "${ARTIFACT_LOG}")
+  # hip doesn't work on the CPU-only lxd backend — defence in depth in
+  # case the variant×system matrix isn't filtered upstream.
+  case "$SPREAD_VARIANT:$SPREAD_SYSTEM" in
+    hip:ubuntu-*) echo "skip hip on $SPREAD_SYSTEM"; exit 0 ;;
+    cuda:ubuntu-*) echo "skip cuda on $SPREAD_SYSTEM"; exit 0 ;;
+  esac
+
+  export LLAMA_CPP_BACKEND="$SPREAD_VARIANT"
+  llama-cpp cli -st -hf ggml-org/gemma-3-1b-it-GGUF \
+    -p "Hello Moto!" -n 32
+artifacts:
+  - .

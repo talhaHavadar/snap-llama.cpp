@@ -1,0 +1,17 @@
+summary: snap set backend=cuda errors when the cuda component isn't installed.
+# This relies on the cuda component never being installed in the project's
+# prepare:. On gfx-* boxes only the hip component is installed; on lxd
+# no GPU components at all — both leave cuda missing.
+systems: [hip-*, ubuntu-*]
+execute: |-
+  set -u
+  exec &> >(tee "${ARTIFACT_LOG}")
+  snap set llama-cpp backend=cuda
+  out=$(llama-cpp cli --version 2>&1) && rc=0 || rc=$?
+  echo "$out"
+  test "$rc" -eq 2
+  echo "$out" | grep -q "cuda component is not installed"
+artifacts:
+  - .
+restore: |
+  snap set llama-cpp backend=auto || true

@@ -1,0 +1,40 @@
+summary: LLAMA_CPP_BACKEND env var overrides `snap set backend=`.
+prepare: |
+  snap set llama-cpp backend=cpu
+execute: |-
+  set -eu
+  exec &> >(tee "${ARTIFACT_LOG}")
+
+  # 1. Sanity: snap config is cpu.
+  test "$(snap get llama-cpp backend)" = "cpu"
+
+  # 2. With env var set to a different value, the wrapper banner shows
+  #    the env-derived backend, not the snap config value. The wrapper's
+  #    no-arg banner exits 1 — that's expected.
+  banner=$(LLAMA_CPP_BACKEND=auto llama-cpp 2>&1) || true
+  echo "--- banner with LLAMA_CPP_BACKEND=auto, snap backend=cpu ---"
+  echo "$banner"
+
+  # The wrapper prints "Backend: <resolved>". On a CPU-only system auto
+  # resolves to empty (cpu); on a gfx-* system with hip installed it
+  # resolves to hip. In either case the banner should NOT say `Backend: cpu`
+  # exclusively from the snap config — auto resolution overrides it.
+  case "$SPREAD_SYSTEM" in
+    hip-*)
+      echo "$banner" | grep -E 'Backend:[[:space:]]*hip' ;;
+    cuda-*)
+      echo "$banner" | grep -E 'Backend:[[:space:]]*cuda' ;;
+    *)
+      # On CPU-only the banner reads `Backend: cpu` because auto falls
+      # back to cpu when no GPU components are installed. We can't
+      # distinguish "config=cpu" from "env=auto resolved to cpu" by
+      # banner alone, so just assert that the banner ran (no SIGKILL).
+      echo "$banner" | grep -q 'Backend:' ;;
+  esac
+
+  # 3. snap config is unchanged — env var is per-invocation only.
+  test "$(snap get llama-cpp backend)" = "cpu"
+artifacts:
+  - .
+restore: |
+  snap set llama-cpp backend=auto || true

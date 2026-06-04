@@ -1,0 +1,7 @@
+summary: llama-cpp cli --version succeeds and prints a version string.
+execute: |-
+  set -eu
+  exec &> >(tee "${ARTIFACT_LOG}")
+  llama-cpp cli --version 2>&1
+artifacts:
+  - .

@@ -1,0 +1,16 @@
+summary: configure hook rejects unknown backend values at snap-set time.
+execute: |-
+  set -u
+  exec &> >(tee "${ARTIFACT_LOG}")
+  out=$(snap set llama-cpp backend=bogus 2>&1) && rc=0 || rc=$?
+  echo "$out"
+  test "$rc" -ne 0
+  # configure hook emits: "llama-cpp: backend='bogus' is invalid (use ...)"
+  echo "$out" | grep -q "backend='bogus' is invalid"
+  # The rejected value did NOT take effect.
+  current=$(snap get llama-cpp backend)
+  test "$current" != "bogus"
+artifacts:
+  - .
+restore: |
+  snap set llama-cpp backend=auto || true

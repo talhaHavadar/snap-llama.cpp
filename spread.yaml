@@ -1,0 +1,59 @@
+project: snap-llama.cpp
+path: /root/snap-llama.cpp
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  # Channel to test. The Spread workflow sets latest/edge; locally you can
+  # override (e.g. CHANNEL=latest/beta spread tchavadar:) to re-test before
+  # promoting from beta to stable later.
+  CHANNEL: '$(HOST: echo "${CHANNEL:-latest/edge}")'
+backends:
+  # Personal GPU box reached over WireGuard. Same shape as rocm-qa's
+  # `tchavadar` entry — same SSH key var, same address, same username.
+  tchavadar:
+    type: adhoc
+    wait-timeout: 2h
+    kill-timeout: 12h
+    halt-timeout: 3h
+    discard: echo "Discarding $SPREAD_SYSTEM..."
+    allocate: |
+      echo "Allocating $SPREAD_SYSTEM..."
+      ADDRESS 10.17.99.227:22
+    systems:
+      - hip-gfx-1201:
+          username: github
+          ssh-rsa-key: '$(HOST: echo "$SPREAD_SSH_KEY")'
+  # Local CPU-only backend for fast iteration on smoke + config suites
+  # without bringing WireGuard up. Prompt-hip variants filter themselves
+  # out on this system.
+  lxd:
+    type: lxd
+    systems:
+      - ubuntu-24.04
+prepare: |
+  set -eux
+  apt update -y
+  apt install -y snapd curl
+  # Install from the chosen channel. --devmode because the snap declares
+  # confinement: devmode; until it moves to strict, this is required.
+  snap install llama-cpp --channel="$CHANNEL" --devmode
+  case "$SPREAD_SYSTEM" in
+    hip-*)
+      snap install llama-cpp+hip --channel="$CHANNEL" ;;
+    cuda-*)
+      snap install llama-cpp+cuda --channel="$CHANNEL" ;;
+    ubuntu-*)
+      : "no GPU on lxd backend — CPU only" ;;
+  esac
+  snap list
+  snap connections llama-cpp || true
+  echo "Tested channel: $CHANNEL"
+  snap info llama-cpp | sed -n '/channels:/,/^$/p'
+restore: |
+  snap remove --purge llama-cpp || true
+suites:
+  tests/smoke/:
+    summary: Smoke tests for the llama-cpp snap (no model download).
+  tests/prompt/:
+    summary: End-to-end inference tests through the snap wrapper.
+  tests/config/:
+    summary: snap-config + configure-hook + env-var precedence tests.

@@ -1,0 +1,9 @@
+summary: llama-cpp <subcmd> routes to $SNAP/bin/llama-<subcmd>.
+execute: |-
+  set -eu
+  exec &> >(tee "${ARTIFACT_LOG}")
+  # `llama-cpp server --help` reaches llama-server, which prints usage and
+  # exits 0. Confirms the wrapper's `exec "$SNAP/bin/llama-$cmd"` path.
+  llama-cpp server --help 2>&1
+artifacts:
+  - .
