@@ -67,6 +67,10 @@ components:
       Adds libggml-cuda.so plus the CUDA runtime libraries so llama.cpp
       can offload to NVIDIA GPUs. Built for the same llama.cpp source tag
       as the parent snap to guarantee ABI compatibility.
+plugs:
+  # To allow loading models from the user's home directory
+  home:
+    read: all
 apps:
   llama-cpp:
     command: bin/cli-wrapper
