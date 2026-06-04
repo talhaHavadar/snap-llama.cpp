@@ -1,4 +1,8 @@
 summary: llama-cpp <subcmd> routes to $SNAP/bin/llama-<subcmd>.
+# Same reason as cli-version: avoid loading GPU runtimes for what is
+# really a wrapper-routing test.
+environment:
+  LLAMA_CPP_BACKEND: cpu
 execute: |-
   set -eu
   exec &> >(tee "${ARTIFACT_LOG}")

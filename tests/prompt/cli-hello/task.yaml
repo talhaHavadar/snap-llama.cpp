@@ -6,11 +6,14 @@ systems: [hip-*, cuda-*, ubuntu-*]
 execute: |-
   set -eu
   exec &> >(tee "${ARTIFACT_LOG}")
-  # hip doesn't work on the CPU-only lxd backend — defence in depth in
-  # case the variant×system matrix isn't filtered upstream.
+  # Allow-list valid variant×system pairs. Anything that falls through is
+  # an invalid combination (e.g. cuda on a hip-only box) and we skip it
+  # rather than fail.
   case "$SPREAD_VARIANT:$SPREAD_SYSTEM" in
-    hip:ubuntu-*) echo "skip hip on $SPREAD_SYSTEM"; exit 0 ;;
-    cuda:ubuntu-*) echo "skip cuda on $SPREAD_SYSTEM"; exit 0 ;;
+    cpu:*) ;;            # cpu runs everywhere
+    hip:hip-*) ;;        # hip only on hip-* systems
+    cuda:cuda-*) ;;      # cuda only on cuda-* systems
+    *) echo "skip $SPREAD_VARIANT on $SPREAD_SYSTEM (no matching hardware)"; exit 0 ;;
   esac
 
   export LLAMA_CPP_BACKEND="$SPREAD_VARIANT"
