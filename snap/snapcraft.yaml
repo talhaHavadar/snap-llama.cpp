@@ -265,13 +265,6 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      # ggml's CMake defaults to "native" (fails on CI runners with no
-      # GPU) or to a pre-Turing list when GGML_NATIVE=OFF. Pin to Volta
-      # through Hopper so the build is hardware-independent and the
-      # resulting .so runs on any consumer NVIDIA card from 2018 onward.
-      # Quote so `;` reaches cmake as one arg (same reason as GPU_TARGETS
-      # in ggml-hip).
-      - -DCMAKE_CUDA_ARCHITECTURES='70;75;80;86;89;90'
     organize:
       # Without GGML_BACKEND_DIR, ggml installs the CUDA backend to
       # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
