@@ -54,7 +54,7 @@ jobs:
                  | tr -d '()')
           if [ "$beta" = "${{ steps.channel.outputs.revision }}" ]; then
             echo "Channel revision matches latest/beta — nothing to test"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
