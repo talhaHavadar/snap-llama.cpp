@@ -1,4 +1,4 @@
-name: Spread
+name: Beta Tests
 on:
   schedule:
     # 16:00 UTC daily.
