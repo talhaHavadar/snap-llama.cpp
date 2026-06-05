@@ -1,6 +1,7 @@
 # Snap of llama.cpp
 
 [![llama-cpp](https://snapcraft.io/llama-cpp/badge.svg)](https://snapcraft.io/llama-cpp)
+[![Spread](https://github.com/talhaHavadar/snap-llama.cpp/actions/workflows/spread.yml/badge.svg)](https://github.com/talhaHavadar/snap-llama.cpp/actions/workflows/spread.yml)
 
 `llama.cpp` packaged as a snap. The main snap ships a CPU build that runs
 anywhere; optional snap components add GPU backends.
