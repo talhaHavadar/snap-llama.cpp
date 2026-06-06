@@ -38,6 +38,23 @@ jobs:
           name: llama-cpp-${{ matrix.arch }}
           path: ${{ steps.paths.outputs.list }}
           if-no-files-found: error
+  edge-tests:
+    if: github.event_name == 'pull_request'
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    with:
+      snap-artifact: llama-cpp-${{ matrix.arch }}
+      runner: ${{ matrix.runner }}
+      backends: "lxd:"
   publish:
     # Only publish when main advances, never from a PR (PR runs lack secrets).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

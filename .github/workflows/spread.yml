@@ -14,25 +14,21 @@ on:
         type: boolean
         default: true
 jobs:
-  test:
+  # Snapshot the revision currently in $CHANNEL so the promote step at the
+  # end targets the SAME revision spread tested, not whatever might have
+  # pushed to the channel while spread was running. Also short-circuits the
+  # whole pipeline when the source channel already matches latest/beta —
+  # there is nothing to promote and no value in re-running spread.
+  pre-check:
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel || 'latest/edge' }}
-      SPREAD_SSH_KEY: ${{ secrets.SPREAD_SSH_KEY }}
-      SPREAD_BIN: ${{ github.workspace }}/spread-plus/spread-plus
-      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-      WIREGUARD_SERVER_IP_TCHAVADAR: ${{ secrets.WIREGUARD_SERVER_IP_TCHAVADAR }}
-      WIREGUARD_SERVER_PORT: ${{ vars.WIREGUARD_SERVER_PORT }}
-      WIREGUARD_CLIENT_CONFIG_TCHAVADAR: ${{ secrets.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
+    outputs:
+      revision: ${{ steps.snapshot.outputs.revision }}
+      skip: ${{ steps.skip.outputs.skip }}
     steps:
-      - name: Mask WireGuard server IP in logs
-        run: echo "::add-mask::$WIREGUARD_SERVER_IP_TCHAVADAR"
-      - uses: actions/checkout@v6
-      # Capture the revision currently in $CHANNEL so the promote step
-      # at the end targets the SAME revision spread just tested, not
-      # whatever might have pushed to edge while spread was running.
-      - name: Snapshot channel revision
-        id: channel
+      - id: snapshot
+        name: Snapshot channel revision
         run: |
           sudo snap install snapd 2>/dev/null || sudo snap refresh snapd || true
           rev=$(snap info llama-cpp \
@@ -44,84 +40,42 @@ jobs:
           fi
           echo "revision=$rev" >> "$GITHUB_OUTPUT"
           echo "Will test $CHANNEL revision: $rev"
-      # No-op short-circuit: if edge already == beta there's nothing to
-      # promote. Skip the heavy lifting.
-      - name: Skip if channel already == latest/beta
-        id: skip
+      - id: skip
+        name: Decide whether to skip
         run: |
           beta=$(snap info llama-cpp \
                  | awk '$1=="latest/beta:" {print $4}' \
                  | tr -d '()')
-          if [ "$beta" = "${{ steps.channel.outputs.revision }}" ]; then
+          if [ "$beta" = "${{ steps.snapshot.outputs.revision }}" ]; then
             echo "Channel revision matches latest/beta — nothing to test"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.skip.outputs.skip != 'true'
-        uses: actions/checkout@v6
-        with:
-          repository: canonical/spread-plus
-          path: spread-plus
-      - if: steps.skip.outputs.skip != 'true'
-        name: Install spread-plus
-        run: |
-          sudo snap install go --classic --channel 1.24/stable
-          cd spread-plus
-          GOARCH=amd64 go build -o spread-plus cmd/spread/main.go
-      - if: steps.skip.outputs.skip != 'true'
-        name: Setup WireGuard
-        run: |
-          set -x
-          sudo apt update -y
-          sudo apt install -y wireguard-tools resolvconf
-          sudo tee /etc/wireguard/wg1.conf > /dev/null <<EOF
-          ${{ env.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
-          EOF
-          nc -zvu "$WIREGUARD_SERVER_IP_TCHAVADAR" "$WIREGUARD_SERVER_PORT"
-          sudo wg-quick up wg1
-      - if: steps.skip.outputs.skip != 'true'
-        name: Setup LXD
-        uses: canonical/setup-lxd@da2ac84e727dc534215fd14cd088b9209d65893b
-        with:
-          group: adm
-      - if: steps.skip.outputs.skip != 'true'
-        id: run-spread
-        continue-on-error: true
-        name: Run spread
-        run: |
-          chmod +x "$SPREAD_BIN"
-          set -o pipefail
-          "$SPREAD_BIN" -json spread-results.json -artifacts=./logs \
-            | tee spread.log
-      - if: always() && !cancelled() && steps.skip.outputs.skip != 'true'
-        name: Bundle logs (work around colon-in-path restriction)
-        run: |
-          tar czf spread-logs.tar.gz \
-            $( [ -d logs ] && echo logs ) \
-            $( [ -f spread.log ] && echo spread.log ) \
-            $( [ -f spread-results.json ] && echo spread-results.json )
-      - if: always() && !cancelled() && steps.skip.outputs.skip != 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: spread-${{ github.run_id }}
-          retention-days: 30
-          path: spread-logs.tar.gz
-      # Promotion: only on green spread + when promotion is enabled. For
-      # schedule events promotion is always on; for workflow_dispatch the
-      # user picks via the `promote` input.
-      - if: |
-          steps.run-spread.outcome == 'success' &&
-          steps.skip.outputs.skip != 'true' &&
-          (github.event_name == 'schedule' || inputs.promote)
-        name: Promote tested revision to latest/beta
+  test:
+    needs: pre-check
+    if: needs.pre-check.outputs.skip != 'true'
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.channel || 'latest/edge' }}
+  # Schedule events always promote on success; workflow_dispatch lets the
+  # user opt out via the `promote` input. `needs: test` implicitly requires
+  # spread to have passed (skipped/failed test jobs skip promote too).
+  promote:
+    needs: [pre-check, test]
+    if: |
+      needs.pre-check.outputs.skip != 'true' &&
+      (github.event_name == 'schedule' || inputs.promote)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote tested revision to latest/beta
         run: |
           sudo snap install snapcraft --classic
-          snapcraft release llama-cpp ${{ steps.channel.outputs.revision }} latest/beta
-          echo "Promoted revision ${{ steps.channel.outputs.revision }} → latest/beta"
-          # Log the post-promote channel map so a human reviewing the
-          # run can confirm components rode along.
+          snapcraft release llama-cpp ${{ needs.pre-check.outputs.revision }} latest/beta
+          echo "Promoted revision ${{ needs.pre-check.outputs.revision }} → latest/beta"
+          # Log the post-promote channel map so a human reviewing the run
+          # can confirm components rode along.
           snap info llama-cpp | sed -n '/channels:/,/^$/p'
-      - if: steps.run-spread.outcome != 'success' && steps.skip.outputs.skip != 'true'
-        name: Fail job on spread failure
-        run: exit 1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}

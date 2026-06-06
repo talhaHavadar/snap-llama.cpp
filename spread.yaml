@@ -8,6 +8,11 @@ environment:
   # override (e.g. CHANNEL=latest/beta spread tchavadar:) to re-test before
   # promoting from beta to stable later.
   CHANNEL: '$(HOST: echo "${CHANNEL:-latest/edge}")'
+  # When 1, prepare installs from $SPREAD_PATH/local-snap/ (a freshly built
+  # .snap + matching .comp staged by the Snap workflow's edge-tests job)
+  # instead of pulling from $CHANNEL. Defaults off so manual/local
+  # invocations keep testing the published snap.
+  SPREAD_USE_LOCAL_SNAP: '$(HOST: echo "${SPREAD_USE_LOCAL_SNAP:-0}")'
 backends:
   # Personal GPU box reached over WireGuard. Same shape as rocm-qa's
   # `tchavadar` entry — same SSH key var, same address, same username.
@@ -35,23 +40,39 @@ prepare: |
   set -eux
   apt update -y
   apt install -y snapd curl
-  # Install from the chosen channel. --devmode because the snap declares
-  # confinement: devmode; until it moves to strict, this is required.
-  snap install llama-cpp --channel="$CHANNEL" --devmode
-  case "$SPREAD_SYSTEM" in
-    hip-*)
-      snap install llama-cpp+hip --channel="$CHANNEL" --devmode
-      snap components llama-cpp | grep -E '^llama-cpp\+hip\s' ;;
-    cuda-*)
-      snap install llama-cpp+cuda --channel="$CHANNEL" --devmode
-      snap components llama-cpp | grep -E '^llama-cpp\+cuda\s' ;;
-    ubuntu-*)
-      : "no GPU on lxd backend — CPU only" ;;
-  esac
+  # --devmode because the snap declares confinement: devmode; until it
+  # moves to strict, this is required for both install paths.
+  if [ "$SPREAD_USE_LOCAL_SNAP" = "1" ]; then
+    local_snap=$(ls "$SPREAD_PATH"/local-snap/llama-cpp_*.snap 2>/dev/null | head -n1)
+    if [ -z "$local_snap" ]; then
+      echo "SPREAD_USE_LOCAL_SNAP=1 but no llama-cpp_*.snap under $SPREAD_PATH/local-snap/" >&2
+      exit 1
+    fi
+    local_comp=""
+    case "$SPREAD_SYSTEM" in
+      hip-*)  local_comp=$(ls "$SPREAD_PATH"/local-snap/llama-cpp+hip_*.comp 2>/dev/null | head -n1) ;;
+      cuda-*) local_comp=$(ls "$SPREAD_PATH"/local-snap/llama-cpp+cuda_*.comp 2>/dev/null | head -n1) ;;
+    esac
+    echo "Installing local artifact: $local_snap${local_comp:+ + $local_comp}"
+    snap install --dangerous --devmode "$local_snap" ${local_comp:+"$local_comp"}
+    echo "Tested local artifact: $local_snap"
+  else
+    snap install llama-cpp --channel="$CHANNEL" --devmode
+    case "$SPREAD_SYSTEM" in
+      hip-*)
+        snap install llama-cpp+hip --channel="$CHANNEL" --devmode
+        snap components llama-cpp | grep -E '^llama-cpp\+hip\s' ;;
+      cuda-*)
+        snap install llama-cpp+cuda --channel="$CHANNEL" --devmode
+        snap components llama-cpp | grep -E '^llama-cpp\+cuda\s' ;;
+      ubuntu-*)
+        : "no GPU on lxd backend — CPU only" ;;
+    esac
+    echo "Tested channel: $CHANNEL"
+  fi
   snap list
   snap components llama-cpp || true
   snap connections llama-cpp || true
-  echo "Tested channel: $CHANNEL"
   snap info llama-cpp | sed -n '/channels:/,/^$/p'
 restore: |
   snap remove --purge llama-cpp || true
