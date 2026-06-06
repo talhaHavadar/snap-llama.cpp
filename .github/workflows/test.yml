@@ -1,0 +1,96 @@
+name: Spread
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "Runner label to execute on. Must match the artifact arch when snap-artifact is set."
+        type: string
+        required: false
+        default: ubuntu-latest
+      backends:
+        description: "Spread backend filter (e.g. 'lxd:'). Empty runs every backend defined in spread.yaml."
+        type: string
+        required: false
+        default: ""
+      snap-artifact:
+        description: "Name of an uploaded snap artifact to install via SPREAD_USE_LOCAL_SNAP instead of pulling from a channel. Mutually exclusive with channel."
+        type: string
+        required: false
+        default: ""
+      channel:
+        description: "Snap channel to install from. Drives spread.yaml's $CHANNEL. Mutually exclusive with snap-artifact."
+        type: string
+        required: false
+        default: ""
+jobs:
+  test:
+    runs-on: ${{ inputs.runner }}
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      SPREAD_SSH_KEY: ${{ secrets.SPREAD_SSH_KEY }}
+      SPREAD_BIN: ${{ github.workspace }}/spread-plus/spread-plus
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+      WIREGUARD_SERVER_IP_TCHAVADAR: ${{ secrets.WIREGUARD_SERVER_IP_TCHAVADAR }}
+      WIREGUARD_SERVER_PORT: ${{ vars.WIREGUARD_SERVER_PORT }}
+      WIREGUARD_CLIENT_CONFIG_TCHAVADAR: ${{ secrets.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
+    steps:
+      - name: Mask WireGuard server IP in logs
+        run: echo "::add-mask::$WIREGUARD_SERVER_IP_TCHAVADAR"
+      - uses: actions/checkout@v6
+      - if: inputs.snap-artifact != ''
+        name: Stage snap build artifact for spread
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.snap-artifact }}
+          # spread.yaml reads SPREAD_USE_LOCAL_SNAP and, when set, installs
+          # the .snap + .comp it finds under $SPREAD_PATH/local-snap/.
+          path: local-snap
+      - uses: actions/checkout@v6
+        with:
+          repository: canonical/spread-plus
+          path: spread-plus
+      - name: Install spread-plus
+        run: |
+          sudo snap install go --classic --channel 1.24/stable
+          cd spread-plus
+          go build -o spread-plus cmd/spread/main.go
+      - name: Setup WireGuard
+        run: |
+          set -x
+          sudo apt update -y
+          sudo apt install -y wireguard-tools resolvconf
+          sudo tee /etc/wireguard/wg1.conf > /dev/null <<EOF
+          ${{ env.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
+          EOF
+          nc -zvu "$WIREGUARD_SERVER_IP_TCHAVADAR" "$WIREGUARD_SERVER_PORT"
+          sudo wg-quick up wg1
+      - name: Setup LXD
+        uses: canonical/setup-lxd@da2ac84e727dc534215fd14cd088b9209d65893b
+        with:
+          group: adm
+      - id: run-spread
+        continue-on-error: true
+        name: Run spread
+        env:
+          SPREAD_USE_LOCAL_SNAP: ${{ inputs.snap-artifact != '' && '1' || '0' }}
+        run: |
+          chmod +x "$SPREAD_BIN"
+          set -o pipefail
+          "$SPREAD_BIN" -json spread-results.json -artifacts=./logs ${{ inputs.backends }} \
+            | tee spread.log
+      - if: always() && !cancelled()
+        name: Bundle logs (work around colon-in-path restriction)
+        run: |
+          tar czf spread-logs.tar.gz \
+            $( [ -d logs ] && echo logs ) \
+            $( [ -f spread.log ] && echo spread.log ) \
+            $( [ -f spread-results.json ] && echo spread-results.json )
+      - if: always() && !cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spread-${{ github.run_id }}
+          retention-days: 30
+          path: spread-logs.tar.gz
+      - if: steps.run-spread.outcome != 'success'
+        name: Fail job on spread failure
+        run: exit 1
