@@ -23,6 +23,8 @@ jobs:
       - name: Build snap
         id: build
         uses: canonical/craft-actions/snapcraft/pack@67304fab78ef627dc3f2e72c8a6ad51a493a6070
+        with:
+          channel: "latest/candidate"
       - name: Collect artifact paths
         id: paths
         # `components` is a space-delimited list; upload-artifact wants one path per line.

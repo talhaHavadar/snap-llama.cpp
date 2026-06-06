@@ -1,6 +1,5 @@
 name: llama-cpp
 base: core26
-build-base: devel
 version: "b9574"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
@@ -34,11 +33,8 @@ platforms:
   arm64:
     build-on: [arm64]
     build-for: [arm64]
-grade: devel
-confinement: devmode
-# The classic linter checks ELF interpreters/rpaths for `confinement: classic`
-# snaps that escape snap-confine's mount namespace. We are devmode (and will
-# move to strict, not classic), so those checks don't apply — silence them.
+grade: stable
+confinement: strict
 lint:
   ignore:
     - classic
@@ -52,6 +48,10 @@ environment:
   # cli.sh reads $SNAP_COMPONENTS to find backend .so files inside components.
   SNAP_COMPONENTS: $SNAP/../components/$SNAP_REVISION
   LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:/var/lib/snapd/lib/gl:/var/lib/snapd/lib/gl32:$LD_LIBRARY_PATH
+  # llama.cpp's HF downloader writes to $HOME/.cache/huggingface by default,
+  # which the `home` interface excludes (top-level dotdirs are blocked). Point
+  # it at $SNAP_USER_COMMON so writes land in a path the snap owns.
+  HF_HOME: $SNAP_USER_COMMON/huggingface
 components:
   hip:
     type: standard
@@ -79,6 +79,12 @@ apps:
       # driver stub) which is NOT redistributable — it must come from the
       # host because it has to match the kernel module version.
       - opengl
+      # ROCm/HIP enumerates DRM accel nodes (/dev/accel/accelN) at init,
+      # which the `opengl` plug does NOT cover.
+      - accel
+      # llama.cpp pins worker threads with sched_setaffinity. Without this
+      # application fails to init.
+      - process-control
 parts:
   # --- Wrapper script ------------------------------------------------------
   cli:
