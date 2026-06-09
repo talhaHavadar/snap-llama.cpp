@@ -14,44 +14,77 @@ on:
         type: boolean
         default: true
 jobs:
-  # Snapshot the revision currently in $CHANNEL so the promote step at the
-  # end targets the SAME revision spread tested, not whatever might have
-  # pushed to the channel while spread was running. Also short-circuits the
-  # whole pipeline when the source channel already matches latest/beta —
-  # there is nothing to promote and no value in re-running spread.
+  # Snapshot the per-arch revisions currently in $CHANNEL so the promote
+  # step at the end targets the SAME revisions spread tested, not whatever
+  # might have pushed to the channel while spread was running. Also
+  # short-circuits the whole pipeline when every arch already matches
+  # latest/beta — there is nothing to promote and no value in re-running
+  # spread.
   pre-check:
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel || 'latest/edge' }}
     outputs:
-      revision: ${{ steps.snapshot.outputs.revision }}
+      revision_amd64: ${{ steps.snapshot.outputs.revision_amd64 }}
+      revision_arm64: ${{ steps.snapshot.outputs.revision_arm64 }}
       skip: ${{ steps.skip.outputs.skip }}
     steps:
       - id: snapshot
-        name: Snapshot channel revision
+        name: Snapshot channel revisions per arch
+        # `snap info` only reports the host runner's arch, so query the
+        # public store API to discover amd64 and arm64 revisions in one
+        # shot. No auth needed for the public endpoint.
         run: |
-          sudo snap install snapd 2>/dev/null || sudo snap refresh snapd || true
-          rev=$(snap info llama-cpp \
-                | awk -v ch="$CHANNEL:" '$1==ch {print $4}' \
-                | tr -d '()')
-          if [ -z "$rev" ]; then
-            echo "no revision currently published to $CHANNEL"
-            exit 1
-          fi
-          echo "revision=$rev" >> "$GITHUB_OUTPUT"
-          echo "Will test $CHANNEL revision: $rev"
+          set -euo pipefail
+          track="${CHANNEL%/*}"
+          risk="${CHANNEL#*/}"
+          info=$(curl -fsSH "Snap-Device-Series: 16" \
+            "https://api.snapcraft.io/v2/snaps/info/llama-cpp")
+          for arch in amd64 arm64; do
+            rev=$(printf '%s' "$info" | jq -r \
+              --arg track "$track" --arg risk "$risk" --arg arch "$arch" \
+              '[.["channel-map"][]
+                 | select(.channel.track==$track
+                          and .channel.risk==$risk
+                          and .channel.architecture==$arch)
+                 | .revision][0] // empty')
+            if [ -z "$rev" ]; then
+              echo "no revision currently published to $CHANNEL for $arch" >&2
+              exit 1
+            fi
+            echo "revision_${arch}=$rev" >> "$GITHUB_OUTPUT"
+            echo "Will test $CHANNEL/$arch revision: $rev"
+          done
       - id: skip
         name: Decide whether to skip
         run: |
-          beta=$(snap info llama-cpp \
-                 | awk '$1=="latest/beta:" {print $4}' \
-                 | tr -d '()')
-          if [ "$beta" = "${{ steps.snapshot.outputs.revision }}" ]; then
-            echo "Channel revision matches latest/beta — nothing to test"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          info=$(curl -fsSH "Snap-Device-Series: 16" \
+            "https://api.snapcraft.io/v2/snaps/info/llama-cpp")
+          rev_amd64="${{ steps.snapshot.outputs.revision_amd64 }}"
+          rev_arm64="${{ steps.snapshot.outputs.revision_arm64 }}"
+          skip=true
+          for arch in amd64 arm64; do
+            beta=$(printf '%s' "$info" | jq -r \
+              --arg arch "$arch" \
+              '[.["channel-map"][]
+                 | select(.channel.track=="latest"
+                          and .channel.risk=="beta"
+                          and .channel.architecture==$arch)
+                 | .revision][0] // empty')
+            var="rev_${arch}"
+            current="${!var}"
+            if [ "$beta" = "$current" ]; then
+              echo "$arch: $CHANNEL revision $current matches latest/beta — no change"
+            else
+              echo "$arch: $CHANNEL revision $current differs from latest/beta ($beta) — will test"
+              skip=false
+            fi
+          done
+          if [ "$skip" = "true" ]; then
+            echo "Every arch already at latest/beta — nothing to test"
           fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
   test:
     needs: pre-check
     if: needs.pre-check.outputs.skip != 'true'
@@ -61,21 +94,40 @@ jobs:
       channel: ${{ inputs.channel || 'latest/edge' }}
   # Schedule events always promote on success; workflow_dispatch lets the
   # user opt out via the `promote` input. `needs: test` implicitly requires
-  # spread to have passed (skipped/failed test jobs skip promote too).
+  # spread to have passed. Both arches are promoted from the same gate —
+  # today spread only exercises amd64, but the multi-arch promote keeps
+  # the channels in lockstep and is ready for when spread fans out
+  # per-arch internally.
   promote:
     needs: [pre-check, test]
     if: |
       needs.pre-check.outputs.skip != 'true' &&
       (github.event_name == 'schedule' || inputs.promote)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     runs-on: ubuntu-latest
     steps:
       - name: Promote tested revision to latest/beta
-        run: |
-          sudo snap install snapcraft --classic
-          snapcraft release llama-cpp ${{ needs.pre-check.outputs.revision }} latest/beta
-          echo "Promoted revision ${{ needs.pre-check.outputs.revision }} → latest/beta"
-          # Log the post-promote channel map so a human reviewing the run
-          # can confirm components rode along.
-          snap info llama-cpp | sed -n '/channels:/,/^$/p'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          REV_AMD64: ${{ needs.pre-check.outputs.revision_amd64 }}
+          REV_ARM64: ${{ needs.pre-check.outputs.revision_arm64 }}
+        run: |
+          set -euo pipefail
+          sudo snap install snapcraft --classic
+          arch="${{ matrix.arch }}"
+          var="REV_${arch^^}"
+          rev="${!var}"
+          snapcraft release llama-cpp "$rev" latest/beta
+          echo "Promoted $arch revision $rev → latest/beta"
+          # Log the post-promote channel map for this arch so a human
+          # reviewing the run can confirm components rode along. Use the
+          # store API because `snap info` on the runner only shows amd64.
+          curl -fsSH "Snap-Device-Series: 16" \
+            "https://api.snapcraft.io/v2/snaps/info/llama-cpp" \
+            | jq -r --arg arch "$arch" \
+              '.["channel-map"][]
+                 | select(.channel.architecture==$arch)
+                 | "\(.channel.track)/\(.channel.risk) rev=\(.revision) version=\(.version)"'
