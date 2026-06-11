@@ -7,9 +7,9 @@ description: |
   works on any x86_64 or arm64 machine. Optional snap components add
   GPU backends:
 
-    sudo snap install --edge --devmode llama-cpp           # CPU
-    sudo snap install --edge --devmode llama-cpp+hip       # add AMD GPU
-    sudo snap install --edge --devmode llama-cpp+cuda      # add NVIDIA GPU
+    sudo snap install llama-cpp           # CPU
+    sudo snap install llama-cpp+hip       # add AMD GPU
+    sudo snap install llama-cpp+cuda      # add NVIDIA GPU
 
   Select a backend persistently with:
 
