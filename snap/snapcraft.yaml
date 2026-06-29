@@ -226,6 +226,8 @@ parts:
       # usr/lib/<triplet>/ is part of the AMD GPU runtime and belongs in the
       # component, not the main snap.
       usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/hip)/lib/
+      # Catch-aLL for ROCM runtime Tensile Libraries
+      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/rocblas/*/library/TensileLibrary*: (component/hip)/lib/rocblas/library/
     # Drop the ggml-internal artifacts this build also produces. ggml-cpu
     # already owns libggml.so, libggml-base.so, the ggml-config.cmake, the
     # pkgconfig, and the headers — and the hip-built copies differ in content
