@@ -316,6 +316,7 @@ parts:
     build-packages:
       - libvulkan-dev
       - glslc
+      - spirv-headers
       - pkg-config
     stage-packages:
       - libvulkan1
