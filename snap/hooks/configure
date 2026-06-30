@@ -7,9 +7,9 @@ set -e
 # loaded" error at first inference.
 backend="$(snapctl get backend)"
 case "${backend:-auto}" in
-  cpu|hip|cuda|auto) ;;
+  cpu|hip|cuda|vulkan|auto) ;;
   *)
-    echo "llama-cpp: backend='$backend' is invalid (use cpu, hip, cuda, or auto)" >&2
+    echo "llama-cpp: backend='$backend' is invalid (use cpu, hip, cuda, vulkan, or auto)" >&2
     exit 1
     ;;
 esac

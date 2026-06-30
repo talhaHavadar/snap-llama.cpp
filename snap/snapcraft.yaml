@@ -315,7 +315,7 @@ parts:
     plugin: cmake
     build-packages:
       - libvulkan-dev
-      - shaderc
+      - glslc
       - pkg-config
     stage-packages:
       - libvulkan1
