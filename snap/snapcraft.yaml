@@ -11,10 +11,11 @@ description: |
     sudo snap install llama-cpp+hip       # add AMD GPU
     sudo snap install llama-cpp+cuda      # add NVIDIA GPU
     sudo snap install llama-cpp+vulkan    # add Vulkan GPU (Intel, AMD, etc.)
+    sudo snap install llama-cpp+opencl    # add OpenCL GPU (Adreno, Mali, etc.)
 
   Select a backend persistently with:
 
-    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,auto}    # auto = probe
+    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,auto}    # auto = probe
     snap get llama-cpp backend
 
   or override it per invocation with the env var:
@@ -76,6 +77,14 @@ components:
       can offload to any Vulkan 1.2-capable GPU (Intel Arc, AMD without ROCm,
       mobile GPUs, etc.). Built for the same llama.cpp source tag as the
       parent snap to guarantee ABI compatibility.
+  opencl:
+    type: standard
+    summary: OpenCL GPU backend (Adreno, Mali, and other OpenCL 2.0 GPUs)
+    description: |
+      Adds libggml-opencl.so plus the OpenCL runtime libraries so llama.cpp
+      can offload to OpenCL-capable GPUs (Qualcomm Adreno, ARM Mali, etc.).
+      Built for the same llama.cpp source tag as the parent snap to guarantee
+      ABI compatibility.
 apps:
   llama-cpp:
     command: bin/cli-wrapper
@@ -344,6 +353,59 @@ parts:
       # internals, so anything left in usr/lib/<triplet>/ is part of the
       # Vulkan runtime and belongs in the component, not the main snap.
       usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/vulkan)/lib/
+    # Drop the ggml-internal artifacts this build also produces — see the
+    # equivalent block in ggml-hip for the full rationale.
+    stage:
+      - -usr/include
+      - -usr/lib/*/cmake
+      - -usr/lib/*/pkgconfig
+      - -usr/lib/*/libggml.so*
+      - -usr/lib/*/libggml-base.so*
+      - -usr/lib/*/ggml/backends0/libggml-cpu*
+  # --- ggml OpenCL backend, organised into the `opencl` component ----------
+  # Same shape as ggml-hip/ggml-cuda/ggml-vulkan: same upstream source-tag for
+  # ABI parity with ggml-cpu, same standalone-files sed, same catch-all
+  # organize, same stage exclusions. OpenCL-specific flags only.
+  # ocl-icd-libopencl1 is the OpenCL ICD loader (libOpenCL.so.1); the actual
+  # GPU implementation comes from the host via the `opengl` plug (snapd maps
+  # /var/lib/snapd/lib/gl into the snap, which includes the OpenCL ICD on
+  # supported platforms).
+  ggml-opencl:
+    source: https://github.com/ggml-org/llama.cpp.git
+    source-tag: b9859
+    source-depth: 1
+    source-subdir: ggml
+    plugin: cmake
+    build-packages:
+      - ocl-icd-opencl-dev
+      - opencl-headers
+      - pkg-config
+    stage-packages:
+      - ocl-icd-libopencl1
+    # Same standalone-files workaround as ggml-cpu — see comment there.
+    override-pull: |
+      craftctl default
+      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
+        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_CPU=OFF
+      - -DGGML_OPENCL=ON
+      - -DGGML_NATIVE=OFF
+      - -DGGML_BUILD_TESTS=OFF
+      - -DGGML_BUILD_EXAMPLES=OFF
+    organize:
+      # Without GGML_BACKEND_DIR, ggml installs the OpenCL backend to
+      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
+      usr/bin/libggml-opencl.so: (component/opencl)/lib/ggml/backends/libggml-opencl.so
+      # Catch-all for every OpenCL runtime library the stage-packages closure
+      # pulled in. The `stage:` exclusions below already strip the ggml
+      # internals, so anything left in usr/lib/<triplet>/ is part of the
+      # OpenCL runtime and belongs in the component, not the main snap.
+      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/opencl)/lib/
     # Drop the ggml-internal artifacts this build also produces — see the
     # equivalent block in ggml-hip for the full rationale.
     stage:
