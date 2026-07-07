@@ -88,6 +88,9 @@ components:
 apps:
   llama-cpp:
     command: bin/cli-wrapper
+    extensions:
+      # Automatically binds host Vulkan/OpenGL maps
+      - gpu
     plugs:
       - home
       - network
