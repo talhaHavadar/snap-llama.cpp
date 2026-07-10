@@ -7,7 +7,13 @@ set -e
 # loaded" error at first inference.
 backend="$(snapctl get backend)"
 case "${backend:-auto}" in
-  cpu|hip|cuda|vulkan|opencl|sycl|auto) ;;
+  cpu|cuda|vulkan|opencl|sycl|auto) ;;
+  hip)
+    if [ "$SNAP_ARCH" != 'amd64' ]; then
+      echo "llama-cpp: backend=hip is only supported on amd64, not $SNAP_ARCH" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "llama-cpp: backend='$backend' is invalid (use cpu, hip, cuda, vulkan, opencl, sycl, or auto)" >&2
     exit 1
