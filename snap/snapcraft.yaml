@@ -304,6 +304,7 @@ parts:
         -DTHEROCK_ENABLE_HIP_RUNTIME=ON \
         -DTHEROCK_ENABLE_BLAS=ON \
         -DhipBLASLt_CMAKE_ARGS="-DCMAKE_CXX_FLAGS=-isystem${CRAFT_PART_BUILD}/build/core/clr/dist/include" \
+        -DTHEROCK_ENABLE_ROCWMMA=ON \
         -DTHEROCK_AMDGPU_FAMILIES='gfx90a;gfx1030;gfx110X-all;gfx115X-all;gfx1200;gfx1201' \
         -DTHEROCK_AMDGPU_DIST_BUNDLE_NAME='gfx90a_gfx1030_gfx110X-all_gfx115X-all_gfx1200_gfx1201' \
         -DBUILD_TESTING=OFF \
@@ -351,7 +352,8 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      - -DGPU_TARGETS='gfx90a;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+      - -DGGML_HIP_ROCWMMA_FATTN=ON
+      - -DGPU_TARGETS='gfx90a;gfx1100;gfx1151;gfx1200;gfx1201'
       - -DCMAKE_PREFIX_PATH="${CRAFT_STAGE}/opt/rocm"
     build-environment:
       - ROCM_PATH: "$CRAFT_STAGE/opt/rocm"
