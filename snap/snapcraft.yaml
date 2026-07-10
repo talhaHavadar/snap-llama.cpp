@@ -194,6 +194,122 @@ parts:
     # take care of the rest.
     organize:
       usr/bin/llama-*: bin/
+  # This part builds a subset of the ROCm/HIP stack from AMD's monorepo, TheRock.
+  # Notably, we use a prebuilt version of AMD's LLVM toolchain to avoid blowing
+  # up build times (and builder capacity).
+  rocm-libs:
+    source: https://github.com/ROCm/TheRock.git
+    source-tag: therock-7.13
+    source-depth: 1
+    source-submodules: []
+    plugin: nil
+    build-packages:
+      - automake
+      - bison
+      - ccache
+      - cmake
+      - curl
+      - flex
+      - g++
+      - gfortran
+      - git
+      - git-lfs
+      - libegl1-mesa-dev
+      - libtool
+      - make
+      - ninja-build
+      - patchelf
+      - pkg-config
+      - python3-dev
+      - python3-venv
+      - texinfo
+      - xxd
+    override-pull: |
+      set -e
+      craftctl default
+      python3 build_tools/fetch_sources.py \
+        --no-include-system-projects \
+        --no-include-compilers \
+        --no-include-debug-tools \
+        --no-include-rocm-libraries \
+        --no-include-rocm-systems \
+        --no-include-ml-frameworks \
+        --no-include-media-libs \
+        --no-include-iree-libs \
+        --no-include-math-libraries \
+        --source-sets base rocm-systems rocm-libraries
+    override-build: |
+      set -e
+
+      # install python deps
+      python3 -m venv .venv
+      source .venv/bin/activate
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+      # fetch prebuilt toolchain (trusted=yes should be fine because of TLS)
+      echo 'deb [arch=amd64 trusted=yes] https://repo.amd.com/rocm/packages/ubuntu2604 stable main' \
+        | tee /etc/apt/sources.list.d/rocm.list
+      apt-get update
+      apt-get install -y amdrocm-llvm-dev7.13
+
+      # populate build/compiler/amd-llvm from the deb install, then mark it
+      # prebuilt so CMake skips configure/build/stage of amd-llvm
+      echo "Substituting AMD deb LLVM into build/compiler/amd-llvm/stage"
+      AMD_LLVM_STAGE="$CRAFT_PART_BUILD/build/compiler/amd-llvm/stage"
+      mkdir -p "$AMD_LLVM_STAGE/lib/llvm"
+      cp -a /opt/rocm/core-7.13/lib/llvm/. "$AMD_LLVM_STAGE/lib/llvm/"
+      touch "$CRAFT_PART_BUILD/build/compiler/amd-llvm/stage.prebuilt"
+
+      # ditto for amd-comgr and hipcc
+      echo "Substituting AMD deb comgr into build/compiler/amd-comgr/stage"
+      COMGR_STAGE="$CRAFT_PART_BUILD/build/compiler/amd-comgr/stage"
+      mkdir -p "$COMGR_STAGE/lib" "$COMGR_STAGE/include" "$COMGR_STAGE/lib/cmake"
+      cp -a /opt/rocm/core-7.13/lib/libamd_comgr.so* "$COMGR_STAGE/lib/" 2>/dev/null || true
+      cp -a /opt/rocm/core-7.13/include/amd_comgr "$COMGR_STAGE/include/"
+      cp -a /opt/rocm/core-7.13/lib/cmake/amd_comgr "$COMGR_STAGE/lib/cmake/"
+      touch "$CRAFT_PART_BUILD/build/compiler/amd-comgr/stage.prebuilt"
+      echo "Substituting AMD deb hipcc into build/compiler/hipcc/stage"
+      HIPCC_STAGE="$CRAFT_PART_BUILD/build/compiler/hipcc/stage"
+      mkdir -p "$HIPCC_STAGE/bin"
+      cp -a /opt/rocm/core-7.13/bin/hipcc* "$HIPCC_STAGE/bin/" 2>/dev/null || true
+      cp -a /opt/rocm/core-7.13/bin/hipconfig* "$HIPCC_STAGE/bin/" 2>/dev/null || true
+      touch "$CRAFT_PART_BUILD/build/compiler/hipcc/stage.prebuilt"
+
+      # and also for sysdeps, except these will be rebuilt
+      echo "Staging rocm_sysdeps alongside lib/llvm"
+      mkdir -p "$AMD_LLVM_STAGE/lib/rocm_sysdeps"
+      cp -a /opt/rocm/core-7.13/lib/rocm_sysdeps/. "$AMD_LLVM_STAGE/lib/rocm_sysdeps/"
+
+      # then remove system package to make sure it doesn't interfere with the build
+      apt-get remove -y amdrocm-llvm-dev7.13
+      apt-get autoremove -y
+
+      # avoid breaking builds on newer compilers
+      export CFLAGS="${CFLAGS:-} -Wno-error"
+
+      # enable only what ggml's HIP backend needs: core + HIP runtime and BLAS
+      cmake --fresh -B build -G Ninja . \
+        -DTHEROCK_ENABLE_ALL=OFF \
+        -DTHEROCK_ENABLE_CORE_RUNTIME=ON \
+        -DTHEROCK_ENABLE_HIP_RUNTIME=ON \
+        -DTHEROCK_ENABLE_BLAS=ON \
+        -DhipBLASLt_CMAKE_ARGS="-DCMAKE_CXX_FLAGS=-isystem${CRAFT_PART_BUILD}/build/core/clr/dist/include" \
+        -DTHEROCK_AMDGPU_FAMILIES='gfx90a;gfx942;gfx1030;gfx110X-all;gfx115X-all;gfx1200;gfx1201' \
+        -DTHEROCK_AMDGPU_DIST_BUNDLE_NAME='gfx90a_gfx942_gfx1030_gfx110X-all_gfx115X-all_gfx1200_gfx1201' \
+        -DBUILD_TESTING=OFF \
+        -DTHEROCK_BUILD_TESTING=OFF \
+        -DTHEROCK_BUNDLE_SYSDEPS=ON
+
+      export CMAKE_BUILD_PARALLEL_LEVEL=$CRAFT_PARALLEL_BUILD_COUNT
+      cmake --build build --target artifact-blas
+      cmake --build build --target dist-rocm
+
+      mkdir -p "$CRAFT_PART_INSTALL/opt/rocm"
+      cp -a build/dist/rocm/. "$CRAFT_PART_INSTALL/opt/rocm/"
+    prime:
+      # staged for the ggml-hip build but kept out of the CPU main snap
+      - -opt/rocm
   # --- ggml HIP backend, organised into the `hip` component ----------------
   # Same upstream source-tag as ggml-cpu for ABI compatibility. Only
   # libggml-hip.so + ROCm runtime libs are routed into the component; the
@@ -201,29 +317,19 @@ parts:
   # produces are filtered at the `stage:` step so they do not collide with
   # ggml-cpu's copies in the default partition.
   ggml-hip:
+    after: [rocm-libs]
     source: https://github.com/ggml-org/llama.cpp.git
     source-tag: b10486
     source-depth: 1
     source-subdir: ggml
     plugin: cmake
     build-packages:
-      - rocm-cmake
-      - hipcc
-      - libhipblas-dev
-      - librocblas-dev
-    stage-packages:
-      - libhipblas3
-      - librocblas5
-      - libgomp1
+      - pkg-config
     # Same standalone-files workaround as ggml-cpu — see comment there.
     override-pull: |
       craftctl default
       sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
         "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
-    override-build: |
-      export HIPCXX="$(hipconfig -l)/clang"
-      export HIP_PATH="$(hipconfig -R)"
-      craftctl default
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
@@ -234,21 +340,24 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      # Quote so the `;` separators reach cmake as one arg rather than
-      # getting interpreted as shell command separators.
       - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+      - -DCMAKE_PREFIX_PATH="${CRAFT_STAGE}/opt/rocm"
+    build-environment:
+      - ROCM_PATH: "$CRAFT_STAGE/opt/rocm"
+      - HIP_PATH: "$ROCM_PATH"
+      - HIPCXX: "$ROCM_PATH/lib/llvm/bin/clang++"
+      - PATH: "$ROCM_PATH/bin:$ROCM_PATH/lib/llvm/bin:$PATH"
+      - LD_LIBRARY_PATH: "$ROCM_PATH/lib:$ROCM_PATH/lib/llvm/lib:$ROCM_PATH/lib/rocm_sysdeps/lib:${LD_LIBRARY_PATH:-}"
+    override-build: |
+      craftctl default
+      mkdir -p "$CRAFT_PART_INSTALL/opt/rocm"
+      cp -a "$ROCM_PATH/lib" "$CRAFT_PART_INSTALL/opt/rocm/lib"
     organize:
       # Without GGML_BACKEND_DIR, ggml installs the HIP backend to
       # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
       usr/bin/libggml-hip.so: (component/hip)/lib/ggml/backends/libggml-hip.so
-      # Catch-all for every ROCm runtime library the stage-packages closure
-      # pulled in. By the time we get here, the ggml internals are already
-      # filtered out by the `stage:` exclusions below, so anything left in
-      # usr/lib/<triplet>/ is part of the AMD GPU runtime and belongs in the
-      # component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/hip)/lib/
-      # Catch-aLL for ROCM runtime Tensile Libraries
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/rocblas/*/library/TensileLibrary*: (component/hip)/lib/rocblas/library/
+      # catch-all for ROCm runtime libraries
+      opt/rocm: (component/hip)/opt/rocm
     # Drop the ggml-internal artifacts this build also produces. ggml-cpu
     # already owns libggml.so, libggml-base.so, the ggml-config.cmake, the
     # pkgconfig, and the headers — and the hip-built copies differ in content
@@ -260,6 +369,10 @@ parts:
       - -usr/lib/*/libggml.so*
       - -usr/lib/*/libggml-base.so*
       - -usr/lib/*/ggml/backends0/libggml-cpu*
+      - -opt/rocm/lib/**/include
+      - -opt/rocm/lib/**/cmake
+      - -opt/rocm/lib/**/pkgconfig
+      - -opt/rocm/lib/**/*.a
   # --- ggml CUDA backend, organised into the `cuda` component --------------
   # Same shape as ggml-hip: same upstream source-tag for ABI parity with
   # ggml-cpu, same standalone-files sed, same catch-all organize, same
