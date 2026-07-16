@@ -228,7 +228,6 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      - -DGGML_HIP_ROCWMMA_FATTN=ON
     build-environment:
       - ROCM_PATH: "$CRAFT_STAGE/opt/rocm"
       - HIP_PATH: "$ROCM_PATH"
