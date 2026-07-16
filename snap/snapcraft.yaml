@@ -210,6 +210,7 @@ parts:
     plugin: cmake
     build-packages:
       - pkg-config
+      - pkg-rocm-tools
     stage-snaps:
       - rocm-inference/latest/beta
     # Same standalone-files workaround as ggml-cpu — see comment there.
@@ -228,8 +229,6 @@ parts:
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
       - -DGGML_HIP_ROCWMMA_FATTN=ON
-      - -DGPU_TARGETS='gfx90a;gfx1100;gfx1151;gfx1200;gfx1201'
-      - -DCMAKE_PREFIX_PATH="${CRAFT_STAGE}/opt/rocm"
     build-environment:
       - ROCM_PATH: "$CRAFT_STAGE/opt/rocm"
       - HIP_PATH: "$ROCM_PATH"
@@ -241,6 +240,13 @@ parts:
         echo "ggml-hip: skipping HIP backend build on ${CRAFT_ARCH_BUILD_FOR} (amd64-only)"
         exit 0
       fi
+      . /etc/os-release
+      GPU_TARGETS=$(
+        cat /usr/share/pkg-rocm-tools/data/build-targets/$VERSION_CODENAME \
+        | xargs printf "%s;" \
+        | awk '{ print substr( $0, 1, length($0)-1 ) }'
+      )
+      export CRAFT_CMAKE_ARGS="-DGPU_TARGETS=$GPU_TARGETS -DCMAKE_PREFIX_PATH=$ROCM_PATH"
       craftctl default
       mkdir -p "$CRAFT_PART_INSTALL/opt/rocm"
       cp -a "$ROCM_PATH/lib" "$CRAFT_PART_INSTALL/opt/rocm/lib"
