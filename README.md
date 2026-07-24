@@ -17,6 +17,15 @@ sudo snap install --edge --devmode llama-cpp+hip
 
 # Optional: add the NVIDIA GPU (CUDA) backend
 sudo snap install --edge --devmode llama-cpp+cuda
+
+# Optional: add the Vulkan GPU backend (Intel, AMD, etc.)
+sudo snap install --edge --devmode llama-cpp+vulkan
+
+# Optional: add the OpenCL GPU backend (Adreno, Mali, etc.)
+sudo snap install --edge --devmode llama-cpp+opencl
+
+# Optional: add the Intel CPU/GPU/NPU (OpenVINO) backend — amd64 only
+sudo snap install --edge --devmode llama-cpp+openvino
 ```
 
 ## Configure the backend
@@ -27,7 +36,8 @@ The wrapper picks one GPU backend per invocation. The choice is read from
 1. `LLAMA_CPP_BACKEND` env var — for one-off overrides.
 2. Snap config (`snap set llama-cpp backend=…`) — persistent across reboots
    and refreshes.
-3. Default: `auto` — probe `hip`, then `cuda`, fall back to CPU.
+3. Default: `auto` — probe `hip`, `cuda`, `vulkan`, `opencl`, `openvino` in
+   that order, fall back to CPU.
 
 ```bash
 # Persistent: set once, applies to every future invocation
@@ -38,8 +48,9 @@ snap get llama-cpp backend           # -> hip
 LLAMA_CPP_BACKEND=cpu llama-cpp cli --list-devices
 ```
 
-Valid values: `cpu`, `hip`, `cuda`, `auto`. Invalid values are rejected at
-`snap set` time by the configure hook with a clear error.
+Valid values: `cpu`, `hip`, `cuda`, `vulkan`, `opencl`, `openvino`, `auto`.
+Invalid values are rejected at `snap set` time by the configure hook with a
+clear error.
 
 ## Usage
 
@@ -70,6 +81,11 @@ components, mirroring how Debian packages `ggml` and `llama.cpp`:
   - `llama.cpp` (built with `LLAMA_USE_SYSTEM_GGML=ON`).
 - `hip` component: only `libggml-hip.so` and the ROCm runtime libs.
 - `cuda` component: only `libggml-cuda.so` and the CUDA runtime libs.
+- `vulkan` component: only `libggml-vulkan.so` and the Vulkan loader.
+- `opencl` component: only `libggml-opencl.so` and the OpenCL ICD loader.
+- `openvino` component: only `libggml-openvino.so` and the OpenVINO
+  runtime/threading libs. amd64 only — Intel does not publish an arm64
+  OpenVINO runtime archive.
 
 The rationale and trade-offs are recorded as ADRs under
 [`docs/adr/`](docs/adr/). Start with
@@ -83,6 +99,9 @@ snapcraft pack
 #   llama-cpp_<version>_<arch>.snap         (main snap, small)
 #   llama-cpp+hip.comp                      (HIP component, large)
 #   llama-cpp+cuda.comp                     (CUDA component, large)
+#   llama-cpp+vulkan.comp                   (Vulkan component)
+#   llama-cpp+opencl.comp                   (OpenCL component)
+#   llama-cpp+openvino.comp                 (OpenVINO component, amd64 only)
 ```
 
 Local install for testing:

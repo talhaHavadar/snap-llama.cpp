@@ -12,10 +12,11 @@ description: |
     sudo snap install llama-cpp+cuda      # add NVIDIA GPU
     sudo snap install llama-cpp+vulkan    # add Vulkan GPU (Intel, AMD, etc.)
     sudo snap install llama-cpp+opencl    # add OpenCL GPU (Adreno, Mali, etc.)
+    sudo snap install llama-cpp+openvino  # add Intel CPU/GPU/NPU (OpenVINO), amd64 only
 
   Select a backend persistently with:
 
-    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,auto}    # auto = probe
+    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,openvino,auto}    # auto = probe
     snap get llama-cpp backend
 
   or override it per invocation with the env var:
@@ -85,6 +86,15 @@ components:
       can offload to OpenCL-capable GPUs (Qualcomm Adreno, ARM Mali, etc.).
       Built for the same llama.cpp source tag as the parent snap to guarantee
       ABI compatibility.
+  openvino:
+    type: standard
+    summary: Intel CPU/GPU/NPU (OpenVINO) backend
+    description: |
+      Adds libggml-openvino.so plus the OpenVINO runtime and threading
+      libraries so llama.cpp can offload to Intel CPUs, integrated/discrete
+      GPUs, and NPUs. Built for the same llama.cpp source tag as the parent
+      snap to guarantee ABI compatibility. amd64 only — Intel does not
+      publish an arm64 OpenVINO runtime archive.
 apps:
   llama-cpp:
     command: bin/cli-wrapper
@@ -409,6 +419,99 @@ parts:
       # internals, so anything left in usr/lib/<triplet>/ is part of the
       # OpenCL runtime and belongs in the component, not the main snap.
       usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/opencl)/lib/
+    # Drop the ggml-internal artifacts this build also produces — see the
+    # equivalent block in ggml-hip for the full rationale.
+    stage:
+      - -usr/include
+      - -usr/lib/*/cmake
+      - -usr/lib/*/pkgconfig
+      - -usr/lib/*/libggml.so*
+      - -usr/lib/*/libggml-base.so*
+      - -usr/lib/*/ggml/backends0/libggml-cpu*
+  # --- ggml OpenVINO backend, organised into the `openvino` component ------
+  # Same shape as the other GPU backends for the parts of the build ggml
+  # itself controls (source-tag, standalone-files sed, GGML_BACKEND_DL,
+  # stage exclusions). The OpenVINO backend differs in one important way:
+  # it links against Intel's OpenVINO runtime, which Intel only ships as a
+  # prebuilt archive for x86_64/amd64 — there is no arm64 tarball, apt repo,
+  # or PPA upstream (see docs/adr/0007). override-build therefore no-ops on
+  # every other architecture so the `openvino` component simply doesn't ship
+  # there, and downloads + unpacks the runtime itself before invoking the
+  # normal cmake configure/build/install (craftctl default) on amd64.
+  ggml-openvino:
+    source: https://github.com/ggml-org/llama.cpp.git
+    source-tag: b9987
+    source-depth: 1
+    source-subdir: ggml
+    plugin: cmake
+    build-packages:
+      - ocl-icd-opencl-dev
+      - opencl-headers
+      - opencl-clhpp-headers
+      - wget
+      - pkg-config
+    stage-packages:
+      - ocl-icd-libopencl1
+      - libgomp1
+    # Same standalone-files workaround as ggml-cpu — see comment there.
+    override-pull: |
+      craftctl default
+      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
+        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
+    override-build: |
+      if [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ]; then
+        echo "ggml-openvino: OpenVINO runtime is amd64-only upstream (no arm64 archive); skipping build for $CRAFT_ARCH_BUILD_FOR."
+        mkdir -p "$CRAFT_PART_INSTALL"
+        exit 0
+      fi
+      set -eu
+      ov_version=2026.2.1
+      ov_full=2026.2.1.21919.ede283a88e3
+      ov_dir="$CRAFT_PART_BUILD/openvino-runtime"
+      if [ ! -d "$ov_dir" ]; then
+        wget -q -O /tmp/openvino-runtime.tgz \
+          "https://storage.openvinotoolkit.org/repositories/openvino/packages/${ov_version}/linux/openvino_toolkit_ubuntu24_${ov_full}_x86_64.tgz"
+        mkdir -p "$ov_dir"
+        tar -xf /tmp/openvino-runtime.tgz -C "$ov_dir" --strip-components=1
+        rm -f /tmp/openvino-runtime.tgz
+      fi
+      # find_package(OpenVINO) picks OpenVINO_DIR up via -DOpenVINO_DIR
+      # below (added to cmake-parameters) rather than as an exported shell
+      # var here: craftctl default hands the build off to a separate
+      # process that does not inherit this script's `export`s.
+      craftctl default
+      # Stage the OpenVINO runtime + TBB threading libs the backend links
+      # against so `organize:` below can route them into the component
+      # alongside libggml-openvino.so. Mirrors upstream's own packaging in
+      # .devops/openvino.Dockerfile (copy everything under runtime/lib and
+      # the bundled TBB lib directory).
+      mkdir -p "$CRAFT_PART_INSTALL/opt/openvino-libs"
+      cp -P "$ov_dir"/runtime/lib/intel64/*.so* "$CRAFT_PART_INSTALL/opt/openvino-libs/"
+      cp -P "$ov_dir"/runtime/3rdparty/tbb/lib/*.so* "$CRAFT_PART_INSTALL/opt/openvino-libs/"
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_CPU=OFF
+      - -DGGML_OPENVINO=ON
+      - -DGGML_NATIVE=OFF
+      - -DGGML_BUILD_TESTS=OFF
+      - -DGGML_BUILD_EXAMPLES=OFF
+      # cmake-parameters are interpolated by the generated build.sh, which
+      # runs as a real bash script with CRAFT_PART_BUILD set in its
+      # environment (unlike the export above, this is expanded at the
+      # point cmake actually runs). Points find_package(OpenVINO) straight
+      # at the archive unpacked by override-build.
+      - -DOpenVINO_DIR=${CRAFT_PART_BUILD}/openvino-runtime/runtime/cmake
+    organize:
+      # Without GGML_BACKEND_DIR, ggml installs the OpenVINO backend to
+      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component. Uses a
+      # glob (unlike the exact filenames in the other backends) because this
+      # part intentionally produces nothing on non-amd64 architectures.
+      usr/bin/libggml-openvino*.so: (component/openvino)/lib/ggml/backends/libggml-openvino.so
+      # The OpenVINO + TBB runtime libs staged into opt/openvino-libs above.
+      opt/openvino-libs/*.so*: (component/openvino)/lib/
     # Drop the ggml-internal artifacts this build also produces — see the
     # equivalent block in ggml-hip for the full rationale.
     stage:
