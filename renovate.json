@@ -13,12 +13,12 @@
         "/^snap/snapcraft\\.yaml$/"
       ],
       "matchStrings": [
-        "version:\\s*\"(?<currentValue>b[0-9]+)\"",
-        "source-tag:\\s*(?<currentValue>b[0-9]+)"
+        "version:\\s*\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"",
+        "source-tag:\\s*(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
       ],
       "depNameTemplate": "ggml-org/llama.cpp",
       "datasourceTemplate": "github-releases",
-      "versioningTemplate": "regex:^b(?<major>\\d+)$"
+      "versioningTemplate": "semver-coerced"
     }
   ],
   "packageRules": [
