@@ -200,6 +200,8 @@ parts:
   # local libggml.so / libggml-base.so / ggml-config.cmake this build also
   # produces are filtered at the `stage:` step so they do not collide with
   # ggml-cpu's copies in the default partition.
+  # amd64-only: the build no-ops on other arches (see rocm-libs), leaving the
+  # organize keys with nothing to match, so the hip component is empty there.
   ggml-hip:
     source: https://github.com/ggml-org/llama.cpp.git
     source-tag: v0.3.0
@@ -207,23 +209,15 @@ parts:
     source-subdir: ggml
     plugin: cmake
     build-packages:
-      - rocm-cmake
-      - hipcc
-      - libhipblas-dev
-      - librocblas-dev
-    stage-packages:
-      - libhipblas3
-      - librocblas5
-      - libgomp1
+      - pkg-config
+      - pkg-rocm-tools
+    stage-snaps:
+      - rocm-inference/latest/beta
     # Same standalone-files workaround as ggml-cpu — see comment there.
     override-pull: |
       craftctl default
       sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
         "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
-    override-build: |
-      export HIPCXX="$(hipconfig -l)/clang"
-      export HIP_PATH="$(hipconfig -R)"
-      craftctl default
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
@@ -234,21 +228,33 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      # Quote so the `;` separators reach cmake as one arg rather than
-      # getting interpreted as shell command separators.
-      - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+    build-environment:
+      - ROCM_PATH: "$CRAFT_STAGE/opt/rocm"
+      - HIP_PATH: "$ROCM_PATH"
+      - HIPCXX: "$ROCM_PATH/lib/llvm/bin/clang++"
+      - PATH: "$ROCM_PATH/bin:$ROCM_PATH/lib/llvm/bin:$PATH"
+      - LD_LIBRARY_PATH: "$ROCM_PATH/lib:$ROCM_PATH/lib/llvm/lib:$ROCM_PATH/lib/rocm_sysdeps/lib:${LD_LIBRARY_PATH:-}"
+    override-build: |
+      if [ "${CRAFT_ARCH_BUILD_FOR}" != "amd64" ]; then
+        echo "ggml-hip: skipping HIP backend build on ${CRAFT_ARCH_BUILD_FOR} (amd64-only)"
+        exit 0
+      fi
+      . /etc/os-release
+      GPU_TARGETS=$(
+        cat /usr/share/pkg-rocm-tools/data/build-targets/$VERSION_CODENAME \
+        | xargs printf "%s;" \
+        | awk '{ print substr( $0, 1, length($0)-1 ) }'
+      )
+      export CRAFT_CMAKE_ARGS="-DGPU_TARGETS=$GPU_TARGETS -DCMAKE_PREFIX_PATH=$ROCM_PATH"
+      craftctl default
+      mkdir -p "$CRAFT_PART_INSTALL/opt/rocm"
+      cp -a "$ROCM_PATH/lib" "$CRAFT_PART_INSTALL/opt/rocm/lib"
     organize:
       # Without GGML_BACKEND_DIR, ggml installs the HIP backend to
       # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
       usr/bin/libggml-hip.so: (component/hip)/lib/ggml/backends/libggml-hip.so
-      # Catch-all for every ROCm runtime library the stage-packages closure
-      # pulled in. By the time we get here, the ggml internals are already
-      # filtered out by the `stage:` exclusions below, so anything left in
-      # usr/lib/<triplet>/ is part of the AMD GPU runtime and belongs in the
-      # component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/hip)/lib/
-      # Catch-aLL for ROCM runtime Tensile Libraries
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/rocblas/*/library/TensileLibrary*: (component/hip)/lib/rocblas/library/
+      # catch-all for ROCm runtime libraries
+      opt/rocm: (component/hip)/opt/rocm
     # Drop the ggml-internal artifacts this build also produces. ggml-cpu
     # already owns libggml.so, libggml-base.so, the ggml-config.cmake, the
     # pkgconfig, and the headers — and the hip-built copies differ in content
@@ -260,6 +266,10 @@ parts:
       - -usr/lib/*/libggml.so*
       - -usr/lib/*/libggml-base.so*
       - -usr/lib/*/ggml/backends0/libggml-cpu*
+      - -opt/rocm/lib/**/include
+      - -opt/rocm/lib/**/cmake
+      - -opt/rocm/lib/**/pkgconfig
+      - -opt/rocm/lib/**/*.a
   # --- ggml CUDA backend, organised into the `cuda` component --------------
   # Same shape as ggml-hip: same upstream source-tag for ABI parity with
   # ggml-cpu, same standalone-files sed, same catch-all organize, same
