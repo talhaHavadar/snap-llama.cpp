@@ -185,6 +185,10 @@ parts:
       # with test-* and example-* binaries under usr/bin/.
       - -DLLAMA_BUILD_TESTS=OFF
       - -DLLAMA_BUILD_EXAMPLES=OFF
+      # Upstream flipped LLAMA_BUILD_UI's default from ON to OFF in v0.4.0
+      # (see talhaHavadar/snap-llama.cpp#317). Pin it back ON so the
+      # llama-server embedded Web UI keeps shipping in the snap.
+      - -DLLAMA_BUILD_UI=ON
       # Point find_package(ggml) at the ggml-cpu artefacts staged by the prior
       # part. Snapcraft 8.14's cmake plugin does not pre-set CMAKE_PREFIX_PATH.
       - -DCMAKE_PREFIX_PATH=${CRAFT_STAGE}/usr
