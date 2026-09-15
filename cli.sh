@@ -47,6 +47,12 @@ backend="$(choose_backend)"
 if [ -n "$backend" ]; then
   export GGML_BACKEND_PATH="$SNAP_COMPONENTS/$backend/lib/ggml/backends/libggml-$backend.so"
   export LD_LIBRARY_PATH="$SNAP_COMPONENTS/$backend/lib:${LD_LIBRARY_PATH:-}"
+  if [ "$backend" = "hip" ]; then
+    rocm="$SNAP_COMPONENTS/hip/opt/rocm"
+    export ROCM_PATH="$rocm"
+    export HIP_PATH="$rocm"
+    export LD_LIBRARY_PATH="$rocm/lib:$rocm/lib/llvm/lib:$rocm/lib/rocm_sysdeps/lib:$LD_LIBRARY_PATH"
+  fi
 fi
 
 if [ $# -eq 0 ]; then
