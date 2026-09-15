@@ -22,7 +22,7 @@ choose_backend() {
   case "$req" in
     cpu)
       echo ""; return ;;
-    hip|cuda|vulkan|opencl)
+    hip|cuda|vulkan|opencl|openvino)
       if [ ! -f "$SNAP_COMPONENTS/$req/lib/ggml/backends/libggml-$req.so" ]; then
         echo "llama-cpp: backend='$req' selected but the $req component is not installed." >&2
         echo "  Install it: sudo snap install --devmode llama-cpp+$req" >&2
@@ -31,14 +31,14 @@ choose_backend() {
       fi
       echo "$req"; return ;;
     auto)
-      for c in hip cuda vulkan opencl; do
+      for c in hip cuda vulkan opencl openvino; do
         if [ -f "$SNAP_COMPONENTS/$c/lib/ggml/backends/libggml-$c.so" ]; then
           echo "$c"; return
         fi
       done
       echo ""; return ;;
     *)
-      echo "llama-cpp: invalid backend='$req' (use cpu|hip|cuda|vulkan|opencl|auto)" >&2
+      echo "llama-cpp: invalid backend='$req' (use cpu|hip|cuda|vulkan|opencl|openvino|auto)" >&2
       exit 2 ;;
   esac
 }
@@ -57,7 +57,7 @@ if [ $# -eq 0 ]; then
   ls "$SNAP/bin/" | sed -n 's/^llama-/  /p'
   echo
   echo "Backend: ${backend:-cpu}"
-  echo "  Configure persistently: sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,auto}"
+  echo "  Configure persistently: sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,openvino,auto}"
   echo "  Override per-run:       LLAMA_CPP_BACKEND=... llama-cpp ..."
   exit 1
 fi
