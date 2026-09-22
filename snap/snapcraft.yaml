@@ -88,10 +88,10 @@ components:
 apps:
   llama-cpp:
     command: bin/cli-wrapper
-    extensions:
+    extensions: &extensions
       # Automatically binds host Vulkan/OpenGL maps
       - gpu
-    plugs:
+    plugs: &plugs
       - home
       - network
       - network-bind
@@ -106,6 +106,12 @@ apps:
       # llama.cpp pins worker threads with sched_setaffinity. Without this
       # application fails to init.
       - process-control
+  server:
+    command: bin/cli-wrapper server
+    daemon: simple
+    install-mode: disable
+    extensions: *extensions
+    plugs: *plugs
 parts:
   # --- Wrapper script ------------------------------------------------------
   cli:
