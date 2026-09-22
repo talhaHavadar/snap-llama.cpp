@@ -19,3 +19,8 @@ esac
 if [ -z "$backend" ]; then
   snapctl set backend=auto
 fi
+
+# Set the default value for server-opts
+if [ -z "$(snapctl get server-opts)" ]; then
+  snapctl set server-opts=""
+fi

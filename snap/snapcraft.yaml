@@ -107,7 +107,7 @@ apps:
       # application fails to init.
       - process-control
   server:
-    command: bin/cli-wrapper server
+    command: bin/server-wrapper
     daemon: simple
     install-mode: disable
     extensions: *extensions
@@ -119,8 +119,10 @@ parts:
     source: scripts
     stage:
       - bin/cli-wrapper
+      - bin/server-wrapper
     organize:
       cli.sh: bin/cli-wrapper
+      server.sh: bin/server-wrapper
   # --- ggml: CPU + loader libs, lives in the main snap --------------------
   # Builds llama.cpp's bundled ggml/ subdirectory standalone with the
   # backend-dl loader enabled and every CPU variant emitted as its own .so.
