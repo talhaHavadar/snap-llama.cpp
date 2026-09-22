@@ -116,7 +116,7 @@ parts:
   # --- Wrapper script ------------------------------------------------------
   cli:
     plugin: dump
-    source: .
+    source: scripts
     stage:
       - bin/cli-wrapper
     organize:
