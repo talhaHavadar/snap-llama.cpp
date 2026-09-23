@@ -1,6 +1,6 @@
 name: llama-cpp
 base: core26
-version: "v0.4.1"
+version: &version "v0.4.1"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   llama.cpp packaged as a snap. The main snap ships a CPU build that
@@ -127,9 +127,9 @@ parts:
   # loader scans `dirname(/proc/self/exe)`. The `organize:` rule below moves
   # the CPU backends into $SNAP/bin/ alongside the llama-* binaries, so
   # exec_dir matches and discovery works without any env var.
-  ggml-cpu:
+  ggml-cpu: &ggml-backend
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
+    source-tag: *version
     source-depth: 1
     source-subdir: ggml
     plugin: cmake
@@ -165,7 +165,7 @@ parts:
   llama-cpp:
     after: [ggml-cpu]
     source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
+    source-tag: *version
     source-depth: 1
     plugin: cmake
     build-packages:
@@ -205,11 +205,7 @@ parts:
   # produces are filtered at the `stage:` step so they do not collide with
   # ggml-cpu's copies in the default partition.
   ggml-hip:
-    source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
-    source-depth: 1
-    source-subdir: ggml
-    plugin: cmake
+    <<: *ggml-backend
     build-packages:
       - rocm-cmake
       - hipcc
@@ -219,11 +215,6 @@ parts:
       - libhipblas3
       - librocblas5
       - libgomp1
-    # Same standalone-files workaround as ggml-cpu — see comment there.
-    override-pull: |
-      craftctl default
-      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
-        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
     override-build: |
       export HIPCXX="$(hipconfig -l)/clang"
       export HIP_PATH="$(hipconfig -R)"
@@ -269,11 +260,7 @@ parts:
   # ggml-cpu, same standalone-files sed, same catch-all organize, same
   # stage exclusions. CUDA-specific flags only. See docs/adr/0006.
   ggml-cuda:
-    source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
-    source-depth: 1
-    source-subdir: ggml
-    plugin: cmake
+    <<: *ggml-backend
     build-packages:
       - nvidia-cuda-toolkit
       - nvidia-cuda-toolkit-gcc
@@ -283,11 +270,6 @@ parts:
       - libcudart12
       - libcusparse12
       - libgomp1
-    # Same standalone-files workaround as ggml-cpu — see comment there.
-    override-pull: |
-      craftctl default
-      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
-        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
@@ -324,11 +306,7 @@ parts:
   # itself is vendor-agnostic; the actual GPU ICD (.so) comes from the host
   # via the `opengl` plug (snapd maps /var/lib/snapd/lib/gl into the snap).
   ggml-vulkan:
-    source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
-    source-depth: 1
-    source-subdir: ggml
-    plugin: cmake
+    <<: *ggml-backend
     build-packages:
       - libvulkan-dev
       - glslc
@@ -336,11 +314,6 @@ parts:
       - pkg-config
     stage-packages:
       - libvulkan1
-    # Same standalone-files workaround as ggml-cpu — see comment there.
-    override-pull: |
-      craftctl default
-      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
-        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
@@ -378,22 +351,13 @@ parts:
   # /var/lib/snapd/lib/gl into the snap, which includes the OpenCL ICD on
   # supported platforms).
   ggml-opencl:
-    source: https://github.com/ggml-org/llama.cpp.git
-    source-tag: v0.4.1
-    source-depth: 1
-    source-subdir: ggml
-    plugin: cmake
+    <<: *ggml-backend
     build-packages:
       - ocl-icd-opencl-dev
       - opencl-headers
       - pkg-config
     stage-packages:
       - ocl-icd-libopencl1
-    # Same standalone-files workaround as ggml-cpu — see comment there.
-    override-pull: |
-      craftctl default
-      sed -i 's/^    set(GGML_STANDALONE ON)/    set(GGML_STANDALONE OFF)/' \
-        "${CRAFT_PART_SRC}/ggml/CMakeLists.txt"
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
