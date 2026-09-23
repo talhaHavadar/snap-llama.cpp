@@ -21,6 +21,21 @@ description: |
   or override it per invocation with the env var:
 
     LLAMA_CPP_BACKEND=cpu llama-cpp cli ...
+
+  The llama.cpp web server can also be run using the llama-cpp.server app. This
+  is disabled by default but can be enabled by running:
+
+    snap start --enable llama-cpp.server
+
+  By default, no additional arguments are passed to the server, meaning it will
+  listen on the default port and address. Arguments can be specified by setting
+  the server-opts configuration value, e.g.:
+
+    snap set llama-cpp server-opts="--host 0.0.0.0"
+
+  Afterwards, the server must be restarted for the new arguments to take effect:
+
+    snap restart llama-cpp.server
 license: MIT
 source-code:
   - https://github.com/talhaHavadar/snap-llama.cpp
