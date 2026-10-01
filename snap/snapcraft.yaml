@@ -12,10 +12,11 @@ description: |
     sudo snap install llama-cpp+cuda      # add NVIDIA GPU
     sudo snap install llama-cpp+vulkan    # add Vulkan GPU (Intel, AMD, etc.)
     sudo snap install llama-cpp+opencl    # add OpenCL GPU (Adreno, Mali, etc.)
+    sudo snap install llama-cpp+sycl      # add SYCL GPU (Intel)
 
   Select a backend persistently with:
 
-    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,auto}    # auto = probe
+    sudo snap set llama-cpp backend={cpu,hip,cuda,vulkan,opencl,sycl,auto}    # auto = probe
     snap get llama-cpp backend
 
   or override it per invocation with the env var:
@@ -55,6 +56,14 @@ confinement: strict
 lint:
   ignore:
     - classic
+package-repositories:
+  - type: apt
+    url: https://apt.repos.intel.com/oneapi
+    suites: [all]
+    components: [main]
+    # This repo only supports amd64
+    architectures: [amd64]
+    key-id: E9BF0AFC46D6E8B7DA5882F1BAC6F0C353D04109
 environment:
   # Used by cli.sh and baked into the snap by snapcraft (expanded at build).
   ARCH_TRIPLET: $CRAFT_ARCH_TRIPLET_BUILD_FOR
@@ -100,6 +109,15 @@ components:
       can offload to OpenCL-capable GPUs (Qualcomm Adreno, ARM Mali, etc.).
       Built for the same llama.cpp source tag as the parent snap to guarantee
       ABI compatibility.
+  sycl:
+    type: standard
+    summary: SYCL GPU backend (Intel GPUs)
+    description: |
+      Adds libggml-sycl.so plus the SYCL runtime libraries so llama.cpp
+      can offload to SYCL-capable GPUs (Intel).
+      Built for the same llama.cpp source tag as the parent snap to guarantee
+      ABI compatibility.
+      This only supports amd64.
 apps:
   llama-cpp:
     command: bin/cli-wrapper
@@ -403,6 +421,92 @@ parts:
     # Drop the ggml-internal artifacts this build also produces — see the
     # equivalent block in ggml-hip for the full rationale.
     stage:
+      - -usr/include
+      - -usr/lib/*/cmake
+      - -usr/lib/*/pkgconfig
+      - -usr/lib/*/libggml.so*
+      - -usr/lib/*/libggml-base.so*
+      - -usr/lib/*/ggml/backends0/libggml-cpu*
+  # --- ggml SYCL backend, organised into the `sycl` component ----------
+  # Same shape as ggml-hip/ggml-cuda/ggml-vulkan: same upstream source-tag for
+  # ABI parity with ggml-cpu, same standalone-files sed, same catch-all
+  # organize, same stage exclusions. SYCL-specific flags only.
+  # This backend only supports amd64 architectures and needs to fetch the
+  # library and compiler packages from the Intel apt repo in order to build.
+  ggml-sycl:
+    <<: *ggml-backend
+    build-packages:
+      - on amd64:
+        - intel-oneapi-compiler-dpcpp-cpp-2026.1
+        - intel-oneapi-dnnl-devel-2026.0
+        - intel-oneapi-mkl-devel-2026.1
+        - intel-oneapi-mkl-sycl-devel-2026.1
+        - libze-dev
+        - libze-intel-gpu-dev
+        - pkg-config
+    stage-packages:
+      - on amd64:
+        - intel-oneapi-compiler-dpcpp-cpp-runtime-2026.1
+        - intel-oneapi-compiler-shared-common-2026.1
+        - intel-oneapi-compiler-shared-runtime-2026.1
+        - intel-oneapi-dnnl-2026.0
+        - intel-oneapi-mkl-2026.1
+        - intel-oneapi-mkl-sycl-2026.1
+        - intel-oneapi-openmp-2026.1
+        - intel-opencl-icd
+        - libigc2
+        - libigdfcl2
+        - libze-intel-gpu1
+        - libze1
+    build-environment:
+      - CMAKE_PREFIX_PATH: "/opt/intel/oneapi/tbb/latest/env/..:/opt/intel/oneapi/mkl/latest/lib/cmake:/opt/intel/oneapi/dnnl/latest/lib/cmake:/opt/intel/oneapi/compiler/latest"
+      - ONEAPI_ROOT: "/opt/intel/oneapi"
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_CPU=OFF
+      - -DGGML_SYCL=ON
+      - -DGGML_NATIVE=OFF
+      - -DGGML_BUILD_TESTS=OFF
+      - -DGGML_BUILD_EXAMPLES=OFF
+      - -DCMAKE_VERBOSE_MAKEFILE=ON
+      - -DCMAKE_CXX_COMPILER=/opt/intel/oneapi/compiler/latest/bin/icpx
+      - -DCMAKE_C_COMPILER=/opt/intel/oneapi/compiler/latest/bin/icx
+    override-build: |
+      if [ "${CRAFT_ARCH_BUILD_FOR}" != "amd64" ]; then
+        echo "The SYCL backend does not support non-amd64 architectures"
+        exit 0
+      fi
+
+      craftctl default
+
+      # Remove the Ubuntu libOpenCL binaries so they don't collide with the ones
+      # from Intel oneAPI when merging all libraries into the component.
+      rm -f "${CRAFT_PART_INSTALL}"/usr/lib/"${CRAFT_ARCH_TRIPLET_BUILD_FOR}"/libOpenCL.so*
+
+      # Override the built-in .icd file as it contains a hard-coded path
+      printf '%s\n' 'libigdrcl.so' > \
+        "${CRAFT_PART_INSTALL}"/etc/OpenCL/vendors/intel.icd
+    organize:
+      # Without GGML_BACKEND_DIR, ggml installs the SYCL backend to
+      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
+      usr/bin/libggml-sycl.so: (component/sycl)/lib/ggml/backends/libggml-sycl.so
+      # Catch-all for every SYCL runtime library the stage-packages closure
+      # pulled in. The `stage:` exclusions below already strip the ggml
+      # internals, so anything left in usr/lib/<triplet>/ is part of the
+      # SYCL runtime and belongs in the component, not the main snap.
+      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/sycl)/lib/
+      # Copy Intel oneAPI libraries and tools
+      etc/OpenCL/vendors/intel.icd: (component/sycl)/etc/OpenCL/vendors/intel.icd
+      opt/intel/oneapi/*/*/lib/*.so*: (component/sycl)/lib/
+      opt/intel/oneapi/compiler/*/bin/sycl-ls: (component/sycl)/bin/
+      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/intel-opencl/libigdrcl.so: (component/sycl)/lib/
+    # Drop the ggml-internal artifacts this build also produces — see the
+    # equivalent block in ggml-hip for the full rationale.
+    stage:
+      - -opt/intel
       - -usr/include
       - -usr/lib/*/cmake
       - -usr/lib/*/pkgconfig
