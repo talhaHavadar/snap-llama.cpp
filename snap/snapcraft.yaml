@@ -1,6 +1,6 @@
 name: llama-cpp
 base: core26
-version: &version "v0.5.0"
+version: &version "v0.6.0"
 summary: Snap package for llama.cpp - LLM inference in C/C++
 description: |
   llama.cpp packaged as a snap. The main snap ships a CPU build that
