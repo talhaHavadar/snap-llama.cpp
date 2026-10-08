@@ -1,0 +1,104 @@
+name: ROCm Snap
+
+on:
+  push:
+    branches: [rocm]
+
+concurrency:
+  group: rocm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, ubuntu, amd64]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build ROCm snap
+        id: build
+        uses: canonical/craft-actions/snapcraft/pack@67304fab78ef627dc3f2e72c8a6ad51a493a6070
+        with:
+          channel: latest/candidate
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: llama-cpp-rocm-amd64
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      SPREAD_SSH_KEY: ${{ secrets.SPREAD_SSH_KEY }}
+      WIREGUARD_SERVER_IP_TCHAVADAR: ${{ secrets.WIREGUARD_SERVER_IP_TCHAVADAR }}
+      WIREGUARD_SERVER_PORT: ${{ vars.WIREGUARD_SERVER_PORT }}
+      WIREGUARD_CLIENT_CONFIG_TCHAVADAR: ${{ secrets.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
+    steps:
+      - name: Mask WireGuard server IP in logs
+        run: echo "::add-mask::$WIREGUARD_SERVER_IP_TCHAVADAR"
+      - uses: actions/checkout@v6
+      - name: Download ROCm snap
+        uses: actions/download-artifact@v8
+        with:
+          name: llama-cpp-rocm-amd64
+          path: rocm-spread/local-snap
+      - uses: actions/checkout@v6
+        with:
+          repository: canonical/spread-plus
+          path: spread-plus
+      - name: Install spread-plus
+        run: |
+          sudo snap install go --classic --channel 1.24/stable
+          cd spread-plus
+          go build -o spread-plus cmd/spread/main.go
+      - name: Set up WireGuard
+        run: |
+          sudo apt update -y
+          sudo apt install -y wireguard-tools resolvconf netcat-openbsd
+          sudo tee /etc/wireguard/wg1.conf > /dev/null <<EOF
+          ${{ env.WIREGUARD_CLIENT_CONFIG_TCHAVADAR }}
+          EOF
+          nc -zvu "$WIREGUARD_SERVER_IP_TCHAVADAR" "$WIREGUARD_SERVER_PORT"
+          sudo wg-quick up wg1
+      - name: Test HIP inference
+        run: |
+          set -o pipefail
+          cd rocm-spread
+          "$GITHUB_WORKSPACE/spread-plus/spread-plus" \
+            -json spread-results.json \
+            -artifacts=./logs \
+            tchavadar: \
+          | tee spread.log
+      - if: always()
+        name: Upload test logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: rocm-spread-logs
+          path: |
+            rocm-spread/logs/
+            rocm-spread/spread.log
+            rocm-spread/spread-results.json
+          if-no-files-found: ignore
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-cpp-rocm-amd64
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Publish snap to rocm/edge
+        shell: bash
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          snap_files=(llama-cpp_*.snap)
+          if [ ${#snap_files[@]} -ne 1 ]; then
+            echo "expected exactly one .snap file, found: ${snap_files[*]:-<none>}" >&2
+            exit 1
+          fi
+          snapcraft upload "${snap_files[0]}" --release rocm/edge

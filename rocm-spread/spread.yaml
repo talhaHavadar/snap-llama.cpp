@@ -1,0 +1,40 @@
+project: snap-llama-rocm
+
+path: /root/snap-llama.cpp/rocm-spread
+
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  ARTIFACT_LOG: output.log
+
+backends:
+  tchavadar:
+    type: adhoc
+    wait-timeout: 2h
+    kill-timeout: 12h
+    halt-timeout: 3h
+    discard: echo "Discarding $SPREAD_SYSTEM..."
+    allocate: |
+      ADDRESS 10.17.99.227:22
+    systems:
+      - hip-gfx-1201:
+          username: github
+          ssh-rsa-key: '$(HOST: echo "$SPREAD_SSH_KEY")'
+
+prepare: |
+  set -eu
+  apt update -y
+  apt install -y snapd curl
+  snap list rocm-inference || snap install rocm-inference --channel=latest/stable
+  set -- "$SPREAD_PATH"/local-snap/llama-cpp_*.snap
+  test "$#" -eq 1 && test -f "$1"
+  snap install --dangerous "$1"
+  snap connect llama-cpp:process-control
+  snap connect llama-cpp:rocm rocm-inference:runtime
+  snap connections llama-cpp
+
+restore: |
+  snap remove --purge llama-cpp || true
+
+suites:
+  tests/hip/:
+    summary: Verify ROCm content connection and AMD GPU inference.

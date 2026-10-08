@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+LLAMA_CPP_BACKEND=hip
+
 # Resolve the requested backend in precedence order:
 #   1) LLAMA_CPP_BACKEND env var (per-invocation override)
 #   2) snap config (snap set llama-cpp backend=…)
@@ -22,7 +24,7 @@ choose_backend() {
   case "$req" in
     cpu)
       echo ""; return ;;
-    hip|cuda|vulkan|opencl)
+    cuda|vulkan|opencl)
       if [ ! -f "$SNAP_COMPONENTS/$req/lib/ggml/backends/libggml-$req.so" ]; then
         echo "llama-cpp: backend='$req' selected but the $req component is not installed." >&2
         echo "  Install it: sudo snap install --devmode llama-cpp+$req" >&2
@@ -30,6 +32,14 @@ choose_backend() {
         exit 2
       fi
       echo "$req"; return ;;
+    hip)
+      if [ ! -d $SNAP/opt/rocm/lib ]; then
+        echo "llama-cpp: backend='hip' selected but the ROCm runtime content provider is not connected." >&2
+        echo "  Install it: sudo snap install rocm-inference" >&2
+        echo "  Connect it: sudo snap connect llama-cpp:rocm rocm-inference:runtime" >&2
+        exit 2
+      fi
+      echo ""; return ;;
     auto)
       for c in hip cuda vulkan opencl; do
         if [ -f "$SNAP_COMPONENTS/$c/lib/ggml/backends/libggml-$c.so" ]; then

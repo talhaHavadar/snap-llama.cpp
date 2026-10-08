@@ -1,0 +1,15 @@
+summary: llama.cpp offloads inference to the HIP backend.
+
+execute: |-
+  set -euo pipefail
+  exec &> >(tee "$ARTIFACT_LOG")
+
+  llama-cpp cli --version
+
+  llama-cpp cli --list-devices 2>&1 | tee devices.log
+  grep -q -i -e 'ROCm' devices.log
+
+  llama-cpp cli -st -hf ggml-org/gemma-3-1b-it-GGUF -p 'Hello Moto!' -n 32
+
+artifacts:
+  - .

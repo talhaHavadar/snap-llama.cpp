@@ -47,9 +47,6 @@ platforms:
   amd64:
     build-on: [amd64]
     build-for: [amd64]
-  arm64:
-    build-on: [arm64]
-    build-for: [arm64]
 grade: stable
 confinement: strict
 lint:
@@ -64,42 +61,21 @@ environment:
   # rather than /snap/, and $SNAP always reflects the real mount path.
   # cli.sh reads $SNAP_COMPONENTS to find backend .so files inside components.
   SNAP_COMPONENTS: $SNAP/../components/$SNAP_REVISION
-  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:/var/lib/snapd/lib/gl:/var/lib/snapd/lib/gl32:$LD_LIBRARY_PATH
+  ROCM_PATH: $SNAP/opt/rocm
+  HIP_PATH: $ROCM_PATH
+  HIP_DEVICE_LIB_PATH: $ROCM_PATH/lib/llvm/amdgcn/bitcode
+  GGML_BACKEND_PATH: $SNAP/bin/libggml-hip.so
+  LD_LIBRARY_PATH: $ROCM_PATH/lib:$ROCM_PATH/lib/llvm/lib:$ROCM_PATH/lib/rocm_sysdeps/lib:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:/var/lib/snapd/lib/gl:/var/lib/snapd/lib/gl32:$LD_LIBRARY_PATH
   # llama.cpp's HF downloader writes to $HOME/.cache/huggingface by default,
   # which the `home` interface excludes (top-level dotdirs are blocked). Point
   # it at $SNAP_USER_COMMON so writes land in a path the snap owns.
   HF_HOME: $SNAP_USER_COMMON/huggingface
-components:
-  hip:
-    type: standard
-    summary: AMD GPU (HIP/ROCm) backend
-    description: |
-      Adds libggml-hip.so plus the ROCm runtime libraries so llama.cpp
-      can offload to AMD GPUs. Built for the same llama.cpp source tag
-      as the parent snap to guarantee ABI compatibility.
-  cuda:
-    type: standard
-    summary: NVIDIA GPU (CUDA) backend
-    description: |
-      Adds libggml-cuda.so plus the CUDA runtime libraries so llama.cpp
-      can offload to NVIDIA GPUs. Built for the same llama.cpp source tag
-      as the parent snap to guarantee ABI compatibility.
-  vulkan:
-    type: standard
-    summary: Vulkan GPU backend
-    description: |
-      Adds libggml-vulkan.so plus the Vulkan runtime libraries so llama.cpp
-      can offload to any Vulkan 1.2-capable GPU (Intel Arc, AMD without ROCm,
-      mobile GPUs, etc.). Built for the same llama.cpp source tag as the
-      parent snap to guarantee ABI compatibility.
-  opencl:
-    type: standard
-    summary: OpenCL GPU backend (Adreno, Mali, and other OpenCL 2.0 GPUs)
-    description: |
-      Adds libggml-opencl.so plus the OpenCL runtime libraries so llama.cpp
-      can offload to OpenCL-capable GPUs (Qualcomm Adreno, ARM Mali, etc.).
-      Built for the same llama.cpp source tag as the parent snap to guarantee
-      ABI compatibility.
+plugs:
+  rocm:
+    interface: content
+    content: rocm-inference-10-0-2604
+    target: $SNAP/opt/rocm
+    default-provider: rocm-inference
 apps:
   llama-cpp:
     command: bin/cli-wrapper
@@ -118,6 +94,7 @@ apps:
       # ROCm/HIP enumerates DRM accel nodes (/dev/accel/accelN) at init,
       # which the `opengl` plug does NOT cover.
       - accel
+      - rocm
       # llama.cpp pins worker threads with sched_setaffinity. Without this
       # application fails to init.
       - process-control
@@ -229,19 +206,18 @@ parts:
   # ggml-cpu's copies in the default partition.
   ggml-hip:
     <<: *ggml-backend
+    build-snaps:
+      - rocm-inference/latest/stable
     build-packages:
-      - rocm-cmake
-      - hipcc
-      - libhipblas-dev
-      - librocblas-dev
-    stage-packages:
-      - libhipblas3
-      - librocblas5
-      - libgomp1
-    override-build: |
-      export HIPCXX="$(hipconfig -l)/clang"
-      export HIP_PATH="$(hipconfig -R)"
-      craftctl default
+      - jq
+      - pkg-config
+    build-environment:
+      - ROCM_PATH: /snap/rocm-inference/current/opt/rocm
+      - HIP_PATH: $ROCM_PATH
+      - HIPCXX: $ROCM_PATH/lib/llvm/bin/clang++
+      - HIP_DEVICE_LIB_PATH: $ROCM_PATH/lib/llvm/amdgcn/bitcode
+      - PATH: $ROCM_PATH/bin:$ROCM_PATH/lib/llvm/bin:$PATH
+      - LD_LIBRARY_PATH: $ROCM_PATH/lib:$ROCM_PATH/lib/llvm/lib:$ROCM_PATH/lib/rocm_sysdeps/lib:${LD_LIBRARY_PATH:-}
     cmake-parameters:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DCMAKE_BUILD_TYPE=Release
@@ -252,156 +228,15 @@ parts:
       - -DGGML_NATIVE=OFF
       - -DGGML_BUILD_TESTS=OFF
       - -DGGML_BUILD_EXAMPLES=OFF
-      # Quote so the `;` separators reach cmake as one arg rather than
-      # getting interpreted as shell command separators.
-      - -DGPU_TARGETS='gfx90a;gfx942;gfx1030;gfx1100;gfx1151;gfx11-generic;gfx1200;gfx1201'
+      - -DGGML_HIP_ROCWMMA_FATTN=OFF
+      - '-DCMAKE_PREFIX_PATH="$ROCM_PATH;$ROCM_PATH/lib/rocm_sysdeps"'
+      - '-DGPU_TARGETS="$(jq -er .dist_amdgpu_targets $ROCM_PATH/share/therock/dist_info.json)"'
     organize:
-      # Without GGML_BACKEND_DIR, ggml installs the HIP backend to
-      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
-      usr/bin/libggml-hip.so: (component/hip)/lib/ggml/backends/libggml-hip.so
-      # Catch-all for every ROCm runtime library the stage-packages closure
-      # pulled in. By the time we get here, the ggml internals are already
-      # filtered out by the `stage:` exclusions below, so anything left in
-      # usr/lib/<triplet>/ is part of the AMD GPU runtime and belongs in the
-      # component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/hip)/lib/
-      # Catch-aLL for ROCM runtime Tensile Libraries
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/rocblas/*/library/TensileLibrary*: (component/hip)/lib/rocblas/library/
+      usr/bin/libggml-hip.so: bin/libggml-hip.so
     # Drop the ggml-internal artifacts this build also produces. ggml-cpu
     # already owns libggml.so, libggml-base.so, the ggml-config.cmake, the
     # pkgconfig, and the headers — and the hip-built copies differ in content
     # (GGML_HIP=ON bakes into the config), so leaving them would collide.
-    stage:
-      - -usr/include
-      - -usr/lib/*/cmake
-      - -usr/lib/*/pkgconfig
-      - -usr/lib/*/libggml.so*
-      - -usr/lib/*/libggml-base.so*
-      - -usr/lib/*/ggml/backends0/libggml-cpu*
-  # --- ggml CUDA backend, organised into the `cuda` component --------------
-  # Same shape as ggml-hip: same upstream source-tag for ABI parity with
-  # ggml-cpu, same standalone-files sed, same catch-all organize, same
-  # stage exclusions. CUDA-specific flags only. See docs/adr/0006.
-  ggml-cuda:
-    <<: *ggml-backend
-    build-packages:
-      - nvidia-cuda-toolkit
-      - nvidia-cuda-toolkit-gcc
-      - pkg-config
-    stage-packages:
-      - libcublas12
-      - libcudart12
-      - libcusparse12
-      - libgomp1
-    cmake-parameters:
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DBUILD_SHARED_LIBS=ON
-      - -DGGML_BACKEND_DL=ON
-      - -DGGML_CPU=OFF
-      - -DGGML_CUDA=ON
-      - -DGGML_NATIVE=OFF
-      - -DGGML_BUILD_TESTS=OFF
-      - -DGGML_BUILD_EXAMPLES=OFF
-    organize:
-      # Without GGML_BACKEND_DIR, ggml installs the CUDA backend to
-      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
-      usr/bin/libggml-cuda.so: (component/cuda)/lib/ggml/backends/libggml-cuda.so
-      # Catch-all for every CUDA runtime library the stage-packages closure
-      # pulled in. The `stage:` exclusions below already strip the ggml
-      # internals, so anything left in usr/lib/<triplet>/ is part of the
-      # NVIDIA GPU runtime and belongs in the component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/cuda)/lib/
-    # Drop the ggml-internal artifacts this build also produces — see the
-    # equivalent block in ggml-hip for the full rationale.
-    stage:
-      - -usr/include
-      - -usr/lib/*/cmake
-      - -usr/lib/*/pkgconfig
-      - -usr/lib/*/libggml.so*
-      - -usr/lib/*/libggml-base.so*
-      - -usr/lib/*/ggml/backends0/libggml-cpu*
-  # --- ggml Vulkan backend, organised into the `vulkan` component ----------
-  # Same shape as ggml-hip/ggml-cuda: same upstream source-tag for ABI parity
-  # with ggml-cpu, same standalone-files sed, same catch-all organize, same
-  # stage exclusions. Vulkan-specific flags only.
-  # libvulkan1 is the only runtime dep — the Vulkan loader (libvulkan.so.1)
-  # itself is vendor-agnostic; the actual GPU ICD (.so) comes from the host
-  # via the `opengl` plug (snapd maps /var/lib/snapd/lib/gl into the snap).
-  ggml-vulkan:
-    <<: *ggml-backend
-    build-packages:
-      - libvulkan-dev
-      - glslc
-      - spirv-headers
-      - pkg-config
-    stage-packages:
-      - libvulkan1
-    cmake-parameters:
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DBUILD_SHARED_LIBS=ON
-      - -DGGML_BACKEND_DL=ON
-      - -DGGML_CPU=OFF
-      - -DGGML_VULKAN=ON
-      - -DGGML_NATIVE=OFF
-      - -DGGML_BUILD_TESTS=OFF
-      - -DGGML_BUILD_EXAMPLES=OFF
-    organize:
-      # Without GGML_BACKEND_DIR, ggml installs the Vulkan backend to
-      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
-      usr/bin/libggml-vulkan.so: (component/vulkan)/lib/ggml/backends/libggml-vulkan.so
-      # Catch-all for every Vulkan runtime library the stage-packages closure
-      # pulled in. The `stage:` exclusions below already strip the ggml
-      # internals, so anything left in usr/lib/<triplet>/ is part of the
-      # Vulkan runtime and belongs in the component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/vulkan)/lib/
-    # Drop the ggml-internal artifacts this build also produces — see the
-    # equivalent block in ggml-hip for the full rationale.
-    stage:
-      - -usr/include
-      - -usr/lib/*/cmake
-      - -usr/lib/*/pkgconfig
-      - -usr/lib/*/libggml.so*
-      - -usr/lib/*/libggml-base.so*
-      - -usr/lib/*/ggml/backends0/libggml-cpu*
-  # --- ggml OpenCL backend, organised into the `opencl` component ----------
-  # Same shape as ggml-hip/ggml-cuda/ggml-vulkan: same upstream source-tag for
-  # ABI parity with ggml-cpu, same standalone-files sed, same catch-all
-  # organize, same stage exclusions. OpenCL-specific flags only.
-  # ocl-icd-libopencl1 is the OpenCL ICD loader (libOpenCL.so.1); the actual
-  # GPU implementation comes from the host via the `opengl` plug (snapd maps
-  # /var/lib/snapd/lib/gl into the snap, which includes the OpenCL ICD on
-  # supported platforms).
-  ggml-opencl:
-    <<: *ggml-backend
-    build-packages:
-      - ocl-icd-opencl-dev
-      - opencl-headers
-      - pkg-config
-    stage-packages:
-      - ocl-icd-libopencl1
-    cmake-parameters:
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DBUILD_SHARED_LIBS=ON
-      - -DGGML_BACKEND_DL=ON
-      - -DGGML_CPU=OFF
-      - -DGGML_OPENCL=ON
-      - -DGGML_NATIVE=OFF
-      - -DGGML_BUILD_TESTS=OFF
-      - -DGGML_BUILD_EXAMPLES=OFF
-    organize:
-      # Without GGML_BACKEND_DIR, ggml installs the OpenCL backend to
-      # CMAKE_INSTALL_BINDIR (usr/bin/). Route it into the component.
-      usr/bin/libggml-opencl.so: (component/opencl)/lib/ggml/backends/libggml-opencl.so
-      # Catch-all for every OpenCL runtime library the stage-packages closure
-      # pulled in. The `stage:` exclusions below already strip the ggml
-      # internals, so anything left in usr/lib/<triplet>/ is part of the
-      # OpenCL runtime and belongs in the component, not the main snap.
-      usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/*.so*: (component/opencl)/lib/
-    # Drop the ggml-internal artifacts this build also produces — see the
-    # equivalent block in ggml-hip for the full rationale.
     stage:
       - -usr/include
       - -usr/lib/*/cmake
