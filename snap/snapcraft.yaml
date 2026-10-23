@@ -250,7 +250,8 @@ parts:
   rocm-libs:
     plugin: nil
     stage-snaps:
-      - rocm-inference/latest/stable
+      - on amd64 to amd64:
+        - rocm-inference/latest/stable
     prime:
       - -opt/rocm
   ggml-hip:
