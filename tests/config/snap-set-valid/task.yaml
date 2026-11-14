@@ -2,7 +2,12 @@ summary: snap set backend=<valid> succeeds and snap get echoes it back.
 execute: |-
   set -eux
   exec &> >(tee "${ARTIFACT_LOG}")
-  for b in cpu hip cuda auto; do
+  backends="cpu cuda auto"
+  # The configure hook only accepts backend=hip on amd64.
+  if [ "$(uname -m)" = x86_64 ]; then
+    backends="cpu hip cuda auto"
+  fi
+  for b in $backends; do
     snap set llama-cpp backend="$b"
     got=$(snap get llama-cpp backend)
     echo "set $b -> got $got"

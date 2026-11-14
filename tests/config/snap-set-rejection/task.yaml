@@ -10,6 +10,14 @@ execute: |-
   # The rejected value did NOT take effect.
   current=$(snap get llama-cpp backend)
   test "$current" != "bogus"
+  # backend=hip is rejected on non-amd64 architectures.
+  if [ "$(uname -m)" != x86_64 ]; then
+    out=$(snap set llama-cpp backend=hip 2>&1) && rc=0 || rc=$?
+    echo "$out"
+    test "$rc" -ne 0
+    echo "$out" | grep -q "backend=hip is only supported on amd64"
+    test "$(snap get llama-cpp backend)" != "hip"
+  fi
 artifacts:
   - .
 restore: |
