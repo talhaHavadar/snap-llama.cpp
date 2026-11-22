@@ -212,6 +212,10 @@ parts:
     build-packages:
       - libcurl4-openssl-dev
       - pkg-config
+      # Lets the UI build from source (matching the tag) instead of falling
+      # back to a mismatched prebuilt "latest" bundle.
+      - nodejs
+      - npm
     stage-packages:
       - libcurl4t64
       - libssl3t64
